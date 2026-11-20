@@ -2,7 +2,7 @@
 
 `burrow` is a small CLI that exposes local projects through **Cloudflare Tunnel**.
 It creates a remotely-managed tunnel, its ingress rules and the DNS records through
-the Cloudflare API, and runs `cloudflared` in the background. `burrow down` removes
+the Cloudflare API, and runs `cloudflared` in the background. `burrow down` stops it; `burrow destroy` removes
 all of it, so no stale tunnels or CNAMEs are left behind.
 
 ## Naming rule
