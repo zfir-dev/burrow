@@ -1,0 +1,27 @@
+{
+  "name": "burrow",
+  "version": "0.1.0",
+  "description": "burrow: manage Cloudflare Tunnels, DNS and cloudflared for local projects",
+  "type": "module",
+  "bin": {
+    "burrow": "bin/burrow.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "examples",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "commander": "^12.1.0",
+    "yaml": "^2.9.1"
+  }
+}
