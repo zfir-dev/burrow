@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
 import { loadConfig, requireConfig, writeTemplate, configPath } from './config.js';
 import { Cloudflare } from './cloudflare.js';
 import { tunnelName, recordComment, tunnelTarget, assertLabel } from './naming.js';
 import { findProjectFile, loadProjectFile, buildIngress, hostnames } from './project.js';
 import {
-  runningPid, startConnector, stopConnector, logFile, pidFile, saveMeta, readMeta, removeMeta,
+  runningPid, startConnector, stopConnector, logFile, pidFile, saveMeta, readMeta, removeMeta, localProjects,
 } from './process.js';
 
 const log = (...a) => console.log(...a);
@@ -140,35 +141,100 @@ export async function up(projectArg, opts) {
   for (const h of hosts) log(`  ${h.service.padEnd(10)} https://${h.hostname}`);
 }
 
+// Stop cloudflared only. Tunnel and DNS stay, so the next `burrow up` is fast.
+// With no project (and no -f), stops every running burrow connector.
 export async function down(projectArg, opts) {
   const dry = !!opts.dryRun;
-  const project = resolveName(projectArg, opts);
-  const cfg = loadConfig();
+  if (opts.purge) return destroy(projectArg, opts);
+  const projects = projectArg || opts.file ? [resolveName(projectArg, opts)] : localProjects();
+  if (!projects.length) { log('No burrow connectors found.'); return; }
+  for (const project of projects) {
+    const pid = runningPid(project);
+    if (dry) { step(dry, pid ? `would stop ${project} cloudflared (pid ${pid})` : `${project}: not running`); continue; }
+    const stopped = await stopConnector(project);
+    log(stopped ? `${project}: stopped cloudflared (pid ${stopped})` : `${project}: not running`);
+  }
+  if (!dry) log('Tunnels and DNS records are kept. Use "burrow destroy" to delete them.');
+}
+
+export function isYes(answer) {
+  return /^y(es)?$/i.test(String(answer || '').trim());
+}
+
+async function confirm(question) {
+  if (!process.stdin.isTTY) return false;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try { return isYes(await rl.question(`${question} [y/N] `)); } finally { rl.close(); }
+}
+
+async function destroyOne(cf, project, dry) {
   const name = tunnelName(project);
   const comment = recordComment(project);
   if (dry) {
     const pid = runningPid(project);
-    step(dry, pid ? `would stop cloudflared (pid ${pid})` : 'cloudflared not running locally');
-    step(dry, `would delete DNS records tagged "${comment}"${cfg.domain ? ` in ${cfg.domain}` : ''}`);
+    step(dry, pid ? `would stop cloudflared (pid ${pid})` : `${project}: cloudflared not running locally`);
+    step(dry, `would delete DNS records tagged "${comment}"`);
     step(dry, `would delete connections and tunnel ${name}`);
     return;
   }
-  requireConfig(cfg, ['token', 'accountId', 'domain']);
   const stopped = await stopConnector(project);
-  log(stopped ? `Stopped cloudflared (pid ${stopped})` : 'cloudflared was not running');
-  const cf = client(cfg);
-  await cf.resolveZoneId(cfg.domain);
+  log(stopped ? `${project}: stopped cloudflared (pid ${stopped})` : `${project}: cloudflared was not running`);
   for (const r of await cf.recordsByComment(comment)) {
     await cf.deleteRecord(r.id);
-    log(`Deleted DNS ${r.type} ${r.name}`);
+    log(`${project}: deleted DNS ${r.type} ${r.name}`);
   }
   const tunnel = await cf.findTunnel(name);
   if (tunnel) {
     await cf.deleteTunnelConnections(tunnel.id);
     await cf.deleteTunnel(tunnel.id);
-    log(`Deleted tunnel ${name} (${tunnel.id})`);
-  } else log(`Tunnel ${name} not found`);
+    log(`${project}: deleted tunnel ${name} (${tunnel.id})`);
+  } else log(`${project}: tunnel ${name} not found`);
   removeMeta(project);
+}
+
+// Stop cloudflared AND delete the tunnel and its DNS records.
+// No project needs --all, and asks for confirmation unless --yes.
+export async function destroy(projectArg, opts) {
+  const dry = !!opts.dryRun;
+  const cfg = loadConfig();
+  const single = projectArg || opts.file;
+  if (!single && !opts.all) {
+    throw new Error('Pass a project, -f <tunnel.yml>, or --all to destroy every burrow tunnel.');
+  }
+  if (single) {
+    const project = resolveName(projectArg, opts);
+    if (dry) return destroyOne(null, project, true);
+    requireConfig(cfg, ['token', 'accountId', 'domain']);
+    const cf = client(cfg);
+    await cf.resolveZoneId(cfg.domain);
+    return destroyOne(cf, project, false);
+  }
+
+  // --all
+  if (dry && !(cfg.token && cfg.accountId && cfg.domain)) {
+    for (const p of localProjects()) step(dry, `would stop ${p} cloudflared (pid ${runningPid(p) || '-'})`);
+    step(dry, 'would delete every burrow-* tunnel and every DNS record tagged burrow:*');
+    return;
+  }
+  requireConfig(cfg, ['token', 'accountId', 'domain']);
+  const cf = client(cfg);
+  await cf.resolveZoneId(cfg.domain);
+  const tunnels = (await cf.listTunnels()).filter((t) => t.name.startsWith('burrow-'));
+  const records = await cf.recordsByCommentPrefix('burrow:');
+  const projects = new Set([
+    ...tunnels.map((t) => t.name.slice('burrow-'.length)),
+    ...records.map((r) => r.comment.slice('burrow:'.length)),
+    ...localProjects(),
+  ]);
+  if (!projects.size) { log('Nothing to destroy.'); return; }
+  log(`This deletes ${tunnels.length} tunnel(s) and ${records.length} DNS record(s) for: ${[...projects].join(', ')}`);
+  if (dry) { for (const p of projects) await destroyOne(cf, p, true); return; }
+  if (!opts.yes && !(await confirm('Destroy all of them?'))) {
+    log('Aborted. (Non-interactive shells need --yes.)');
+    process.exitCode = 1;
+    return;
+  }
+  for (const p of projects) await destroyOne(cf, p, false);
 }
 
 export async function ls() {

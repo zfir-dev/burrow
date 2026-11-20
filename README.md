@@ -87,19 +87,25 @@ See [`examples/inktion.tunnel.yml`](examples/inktion.tunnel.yml).
 
 ## Commands
 
-| Command                    | What it does |
-| -------------------------- | ------------ |
-| `burrow init`              | Write the config template, or verify the token and access |
-| `burrow up [project]`      | Create or reuse tunnel `burrow-<project>`, PUT its ingress config, upsert the CNAMEs (and remove stale ones tagged for this project), then (re)start `cloudflared` in the background |
-| `burrow down [project]`    | Stop `cloudflared`, delete DNS records tagged `burrow:<project>`, delete the tunnel's connections and the tunnel |
-| `burrow ls`                | List `burrow-*` tunnels with their hostnames and local running state |
-| `burrow status [project]`  | Local process, tunnel health, DNS records |
-| `burrow logs [project]`    | Show the cloudflared log (`-n 200`, `--follow`) |
+| Command                          | What it does |
+| -------------------------------- | ------------ |
+| `burrow init`                    | Write the config template, or verify the token and access |
+| `burrow up [project]`            | Create or reuse tunnel `burrow-<project>`, PUT its ingress config, upsert the CNAMEs (and remove stale ones tagged for this project), then (re)start `cloudflared` in the background |
+| `burrow down [project]`          | Stop that project's `cloudflared` only. The tunnel and DNS records are kept, so the next `up` is quick |
+| `burrow down`                    | Stop **every** running burrow connector (each pid in `~/.local/state/burrow/`) |
+| `burrow destroy [project]`       | Stop `cloudflared`, delete DNS records tagged `burrow:<project>`, delete the tunnel's connections and the tunnel. `burrow down <project> --purge` does the same |
+| `burrow destroy --all`           | Delete every `burrow-*` tunnel and every `burrow:*` DNS record, and stop all local connectors. Asks `[y/N]` first; `--yes` skips the prompt (needed in non-interactive shells) |
+| `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state |
+| `burrow status [project]`        | Local process, tunnel health, DNS records |
+| `burrow logs [project]`          | Show the cloudflared log (`-n 200`, `--follow`) |
+
+`destroy` with no project and no `--all` refuses to run.
 
 Options:
 
-- `-f, --file <path>` uses a specific tunnel.yml.
-- `--dry-run` (`up`, `down`) prints the plan offline. It makes no API calls and starts nothing.
+- `-f, --file <path>` uses a specific tunnel.yml (and picks its project).
+- `--dry-run` (`up`, `down`, `destroy`) prints the plan. `up` and `down` stay fully offline.
+  `destroy --all --dry-run` lists what is on Cloudflare when a token is configured.
 - `--force` (`up`) replaces existing DNS records on the same hostnames that burrow doesn't manage.
   Without it, burrow refuses to touch them.
 

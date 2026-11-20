@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { openSync, closeSync, readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
+import { openSync, closeSync, readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
 
@@ -71,4 +71,13 @@ export function readMeta(project) {
 }
 export function removeMeta(project) {
   rmSync(metaFile(project), { force: true });
+}
+
+// Projects that have a pid file in the state dir (running or stale).
+export function localProjects() {
+  try {
+    return readdirSync(stateDir()).filter((f) => f.endsWith('.pid')).map((f) => f.slice(0, -4)).sort();
+  } catch {
+    return [];
+  }
 }
