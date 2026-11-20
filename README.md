@@ -5,6 +5,8 @@ It creates a remotely-managed tunnel, its ingress rules and the DNS records thro
 the Cloudflare API, and runs `cloudflared` in the background. `burrow down` stops it; `burrow destroy` removes
 all of it, so no stale tunnels or CNAMEs are left behind.
 
+![burrow dashboard: tunnel list](docs/dashboard.png)
+
 ## Naming rule
 
 Only flat, one-level hostnames are used, so Cloudflare's free Universal SSL
@@ -147,6 +149,12 @@ It shows every burrow project with:
 - **Up** / **Down** / **Destroy** buttons. **Destroy** opens a dialog and stays disabled until you type the project name.
   The dashboard's own project can't be stopped from the UI.
 
+| Sign in | Live logs |
+| ------- | --------- |
+| ![login](docs/dashboard-login.png) | ![log viewer](docs/dashboard-logs.png) |
+
+The screenshots use fake demo data (`example.dev`, a mock Cloudflare API and made-up logs).
+
 Security:
 
 - The dashboard won't start unless `BURROW_DASHBOARD_PASSWORD` is set (12+ characters).
@@ -167,6 +175,9 @@ Server state lives in `~/.local/state/burrow/dashboard/server.{pid,log}`. A bare
 `burrow down` also stops the dashboard's tunnel connector, so run `burrow dashboard up` to bring it back.
 
 ## Tests
+
+`BURROW_CF_API_BASE` (environment only) points burrow at a mock Cloudflare API. It's used for
+tests and for the README screenshots; leave it unset in normal use.
 
 ```sh
 npm test
