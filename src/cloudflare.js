@@ -1,5 +1,8 @@
 // Minimal Cloudflare API v4 client. Never logs the token.
-const BASE = 'https://api.cloudflare.com/client/v4';
+const DEFAULT_BASE = 'https://api.cloudflare.com/client/v4';
+// BURROW_CF_API_BASE (environment only) points burrow at a mock API for tests
+// and the README screenshots. Never set it in normal use.
+const base = () => process.env.BURROW_CF_API_BASE || DEFAULT_BASE;
 
 export class CloudflareError extends Error {}
 
@@ -11,7 +14,7 @@ export class Cloudflare {
   }
 
   async req(method, path, { query, body, allow404 = false } = {}) {
-    const url = new URL(BASE + path);
+    const url = new URL(base() + path);
     for (const [k, v] of Object.entries(query || {})) if (v !== undefined && v !== '') url.searchParams.set(k, String(v));
     const res = await fetch(url, {
       method,

@@ -23,7 +23,7 @@ export const LOGIN_HTML = (message) => `${head('burrow · sign in', ['/login.js'
 
 export const APP_HTML = `${head('burrow', ['/app.js'])}
 <body x-data="dashboard">
-<header class="container"><nav>
+<header class="container-fluid wide"><nav>
   <ul><li><strong>burrow</strong></li><li><small :class="cfClass" x-text="cfText"></small></li></ul>
   <ul>
     <li><button class="secondary outline" @click="load">Refresh</button></li>
@@ -31,7 +31,7 @@ export const APP_HTML = `${head('burrow', ['/app.js'])}
   </ul>
 </nav></header>
 
-<main class="container">
+<main class="container-fluid wide">
   <p x-show="loading" aria-busy="true">Loading…</p>
   <article x-show="empty">No burrow tunnels yet. Run <code>burrow up</code> in a project with a <code>tunnel.yml</code>.</article>
 
@@ -97,8 +97,13 @@ export const APP_CSS = `
 .badge{display:inline-block;font-size:.75rem;line-height:1.4;padding:.1rem .5rem;border-radius:999px;
   border:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color);white-space:nowrap}
 .badge.ok{color:#1f9d55;border-color:#1f9d55}.badge.warn{color:#d97706;border-color:#d97706}.badge.bad{color:#dc2626;border-color:#dc2626}
-.actions{display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end}
-.actions button{padding:.3rem .7rem;font-size:.85rem;margin:0;width:auto}
+tbody td{white-space:nowrap;vertical-align:middle}
+.actions{display:flex;gap:.4rem;flex-wrap:nowrap;justify-content:flex-end}
+.actions button{padding:.25rem .6rem;font-size:.8rem;margin:0;width:auto}
+.wide{max-width:1400px;margin-inline:auto}
+tbody td,thead th{padding-inline:.5rem}
+table{font-size:.875rem}
+.actions{gap:.3rem}
 button.danger{--pico-background-color:#dc2626;--pico-border-color:#dc2626;--pico-color:#fff}
 button.danger.outline{--pico-background-color:transparent;--pico-color:#dc2626}
 td small{color:var(--pico-muted-color)}
