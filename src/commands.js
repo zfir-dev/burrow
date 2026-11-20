@@ -5,7 +5,9 @@ import { createInterface } from 'node:readline/promises';
 import { loadConfig, requireConfig, writeTemplate, configPath } from './config.js';
 import { Cloudflare } from './cloudflare.js';
 import { tunnelName, recordComment, tunnelTarget, assertLabel } from './naming.js';
-import { findProjectFile, loadProjectFile, buildIngress, hostnames } from './project.js';
+import {
+  findProjectFile, loadProjectFile, buildIngress, hostnames, DASHBOARD_PROJECT, dashboardProject,
+} from './project.js';
 import {
   runningPid, startConnector, stopConnector, logFile, pidFile, saveMeta, readMeta, removeMeta, localProjects,
 } from './process.js';
@@ -16,6 +18,9 @@ const step = (dry, msg) => log(`${dry ? '[dry-run] ' : ''}${msg}`);
 // Resolve the project file: -f, ./tunnel.yml, or the path remembered from a
 // previous `burrow up <project>`.
 function resolveProject(projectArg, opts) {
+  if (projectArg === DASHBOARD_PROJECT && !opts.file) {
+    return { proj: dashboardProject(loadConfig().dashboardPort), file: '(built-in dashboard)' };
+  }
   let file = findProjectFile(opts.file);
   if (!file && projectArg) {
     const meta = readMeta(projectArg);

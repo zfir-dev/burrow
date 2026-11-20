@@ -14,12 +14,12 @@ export function readPid(project) {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-export function isAlive(pid) {
+export function isAlive(pid, match = 'cloudflared') {
   if (!pid) return false;
   try { process.kill(pid, 0); } catch (e) { if (e.code !== 'EPERM') return false; }
   try {
     const cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
-    return cmd.includes('cloudflared');
+    return cmd.includes(match);
   } catch {
     return true; // no /proc (macOS): trust kill(0)
   }

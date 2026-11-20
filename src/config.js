@@ -20,6 +20,9 @@ CF_ACCOUNT_ID=
 CF_ZONE_ID=
 # Tunnel domain. Hostnames: <project>.<domain>, <service>-<project>.<domain>
 BURROW_DOMAIN=
+# Dashboard login (burrow dashboard). At least 12 characters.
+BURROW_DASHBOARD_PASSWORD=
+BURROW_DASHBOARD_PORT=7070
 # Optional path to the cloudflared binary
 CLOUDFLARED_BIN=cloudflared
 `;
@@ -50,6 +53,8 @@ export function loadConfig() {
     zoneId: pick('CF_ZONE_ID'),
     domain: pick('BURROW_DOMAIN').toLowerCase().replace(/\.$/, ''),
     cloudflared: pick('CLOUDFLARED_BIN') || 'cloudflared',
+    dashboardPassword: pick('BURROW_DASHBOARD_PASSWORD'),
+    dashboardPort: pick('BURROW_DASHBOARD_PORT') || '7070',
   };
 }
 

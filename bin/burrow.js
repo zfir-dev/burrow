@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import * as cmd from '../src/commands.js';
+import * as dash from '../src/dashboard/manage.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const program = new Command();
@@ -36,6 +37,19 @@ program.command('destroy [project]')
   .option('-y, --yes', 'skip the confirmation for --all')
   .option('--dry-run', 'print what would be deleted')
   .action(wrap((p, o) => cmd.destroy(p, o)));
+program.command('dashboard [action]')
+  .description('web dashboard: no action = run in foreground; up | down | status to manage it in the background')
+  .option('--port <port>', 'port (default BURROW_DASHBOARD_PORT or 7070)')
+  .option('--host <host>', 'bind address', '127.0.0.1')
+  .option('--no-tunnel', 'with "up": do not expose it on burrow.<domain>')
+  .option('--dry-run', 'with "up": print the plan only')
+  .action(wrap(async (action, o) => {
+    if (!action) return dash.foreground(o);
+    if (action === 'up') return dash.up(o);
+    if (action === 'down') return dash.down(o);
+    if (action === 'status') return dash.status(o);
+    throw new Error(`Unknown dashboard action "${action}" (use up, down or status)`);
+  }));
 program.command('ls').description('list burrow tunnels, hostnames and running state').action(wrap(() => cmd.ls()));
 program.command('status [project]').description('show one project')
   .option('-f, --file <path>', 'path to tunnel.yml')

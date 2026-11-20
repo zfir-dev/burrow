@@ -5,6 +5,16 @@ import { assertLabel, hostnameFor } from './naming.js';
 
 export const DEFAULT_FILE = 'tunnel.yml';
 
+// The dashboard's own tunnel: burrow.<domain> -> the local dashboard port.
+export const DASHBOARD_PROJECT = 'burrow';
+export function dashboardProject(port = 7070) {
+  return {
+    project: DASHBOARD_PROJECT,
+    services: [{ name: 'app', root: true, url: `http://localhost:${port}`, paths: [] }],
+    source: '(built-in dashboard)',
+  };
+}
+
 export function findProjectFile(file) {
   const p = resolve(file || DEFAULT_FILE);
   return existsSync(p) ? p : null;
@@ -38,6 +48,7 @@ export function parseProject(text, source = 'tunnel.yml') {
   const doc = YAML.parse(text) || {};
   const project = String(doc.project ?? '').trim();
   assertLabel(project, `project name in ${source}`);
+  if (project === DASHBOARD_PROJECT) throw new Error(`${source}: "${DASHBOARD_PROJECT}" is reserved for the dashboard`);
   if (!Array.isArray(doc.services) || doc.services.length === 0) {
     throw new Error(`${source}: "services" must be a non-empty list`);
   }
