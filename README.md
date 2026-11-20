@@ -17,8 +17,8 @@ certificate (`*.<domain>`) covers every hostname:
 | root (`app`)       | `<project>.<domain>`           |
 | any other service  | `<service>-<project>.<domain>` |
 
-Example with `BURROW_DOMAIN=example.dev`: `inktion.example.dev`,
-`mail-inktion.example.dev`, `studio-inktion.example.dev`.
+Example with `BURROW_DOMAIN=example.dev`: `acme-shop.example.dev`,
+`mail-acme-shop.example.dev`, `studio-acme-shop.example.dev`.
 
 Cloudflare objects are named and tagged so burrow can find them again:
 
@@ -30,7 +30,7 @@ Cloudflare objects are named and tagged so burrow can find them again:
 Requires Node 18+ and [`cloudflared`](https://github.com/cloudflare/cloudflared/releases).
 
 ```sh
-git clone git@github.com:zfir-dev/burrow.git && cd burrow
+git clone <this-repo-url> burrow && cd burrow
 npm install
 npm link        # puts `burrow` on PATH
 ```
@@ -65,7 +65,7 @@ Every value can also come from the environment. `BURROW_CONFIG` and
 Put a `tunnel.yml` in the project directory, or pass one with `-f`.
 
 ```yaml
-project: inktion
+project: acme-shop
 services:
   - name: app                 # "app" is the root service (or set root: true on one service)
     url: http://localhost:3100
@@ -87,7 +87,7 @@ services:
   `originRequest: { noTLSVerify: true }`.
 - burrow adds a final `http_status:404` rule.
 
-See [`examples/inktion.tunnel.yml`](examples/inktion.tunnel.yml).
+See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 
 ## Commands
 

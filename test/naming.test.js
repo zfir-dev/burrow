@@ -3,23 +3,23 @@ import assert from 'node:assert/strict';
 import { hostnameFor, tunnelName, recordComment, tunnelTarget } from '../src/naming.js';
 
 test('root service uses <project>.<domain>', () => {
-  assert.equal(hostnameFor('inktion', { name: 'app', root: true }, 'example.dev'), 'inktion.example.dev');
+  assert.equal(hostnameFor('acme-shop', { name: 'app', root: true }, 'example.dev'), 'acme-shop.example.dev');
 });
 
 test('sub-services use flat <service>-<project>.<domain>', () => {
-  assert.equal(hostnameFor('inktion', { name: 'mail' }, 'example.dev'), 'mail-inktion.example.dev');
-  assert.equal(hostnameFor('inktion', { name: 'studio' }, 'example.dev'), 'studio-inktion.example.dev');
+  assert.equal(hostnameFor('acme-shop', { name: 'mail' }, 'example.dev'), 'mail-acme-shop.example.dev');
+  assert.equal(hostnameFor('acme-shop', { name: 'studio' }, 'example.dev'), 'studio-acme-shop.example.dev');
 });
 
 test('rejects dotted or invalid labels (would need deeper certs)', () => {
   assert.throws(() => hostnameFor('ink.tion', { name: 'app', root: true }, 'example.dev'));
-  assert.throws(() => hostnameFor('inktion', { name: 'mail.x' }, 'example.dev'));
-  assert.throws(() => hostnameFor('InkTion', { name: 'app', root: true }, 'example.dev'));
-  assert.throws(() => hostnameFor('inktion', { name: '-mail' }, 'example.dev'));
+  assert.throws(() => hostnameFor('acme-shop', { name: 'mail.x' }, 'example.dev'));
+  assert.throws(() => hostnameFor('AcmeShop', { name: 'app', root: true }, 'example.dev'));
+  assert.throws(() => hostnameFor('acme-shop', { name: '-mail' }, 'example.dev'));
 });
 
 test('requires a domain', () => {
-  assert.throws(() => hostnameFor('inktion', { name: 'app', root: true }, ''), /BURROW_DOMAIN/);
+  assert.throws(() => hostnameFor('acme-shop', { name: 'app', root: true }, ''), /BURROW_DOMAIN/);
 });
 
 test('rejects labels over 63 chars', () => {
@@ -27,7 +27,7 @@ test('rejects labels over 63 chars', () => {
 });
 
 test('tunnel name, comment tag and target', () => {
-  assert.equal(tunnelName('inktion'), 'burrow-inktion');
-  assert.equal(recordComment('inktion'), 'burrow:inktion');
+  assert.equal(tunnelName('acme-shop'), 'burrow-acme-shop');
+  assert.equal(recordComment('acme-shop'), 'burrow:acme-shop');
   assert.equal(tunnelTarget('abc'), 'abc.cfargotunnel.com');
 });

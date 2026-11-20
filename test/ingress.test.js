@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseProject, buildIngress, hostnames, pathRegex } from '../src/project.js';
 
-const example = readFileSync(new URL('../examples/inktion.tunnel.yml', import.meta.url), 'utf8');
+const example = readFileSync(new URL('../examples/acme-shop.tunnel.yml', import.meta.url), 'utf8');
 
 test('pathRegex anchors plain prefixes and passes regex through', () => {
   assert.equal(pathRegex('/auth/v1'), '^/auth/v1(/.*)?$');
@@ -16,25 +16,25 @@ test('pathRegex anchors plain prefixes and passes regex through', () => {
   assert.ok(!re.test('/x/auth/v1'));
 });
 
-test('InkTion example hostnames', () => {
+test('acme-shop example hostnames', () => {
   const proj = parseProject(example);
   assert.deepEqual(hostnames(proj, 'example.dev'), [
-    { service: 'app', hostname: 'inktion.example.dev' },
-    { service: 'mail', hostname: 'mail-inktion.example.dev' },
-    { service: 'studio', hostname: 'studio-inktion.example.dev' },
+    { service: 'app', hostname: 'acme-shop.example.dev' },
+    { service: 'mail', hostname: 'mail-acme-shop.example.dev' },
+    { service: 'studio', hostname: 'studio-acme-shop.example.dev' },
   ]);
 });
 
-test('InkTion example ingress: path rules first, then hosts, then 404', () => {
+test('acme-shop example ingress: path rules first, then hosts, then 404', () => {
   const ingress = buildIngress(parseProject(example), 'example.dev');
   assert.deepEqual(ingress, [
-    { hostname: 'inktion.example.dev', path: '^/auth/v1(/.*)?$', service: 'http://localhost:54321' },
-    { hostname: 'inktion.example.dev', path: '^/rest/v1(/.*)?$', service: 'http://localhost:54321' },
-    { hostname: 'inktion.example.dev', path: '^/storage/v1(/.*)?$', service: 'http://localhost:54321' },
-    { hostname: 'inktion.example.dev', path: '^/realtime/v1(/.*)?$', service: 'http://localhost:54321' },
-    { hostname: 'inktion.example.dev', service: 'http://localhost:3100' },
-    { hostname: 'mail-inktion.example.dev', service: 'http://localhost:54324' },
-    { hostname: 'studio-inktion.example.dev', service: 'http://localhost:54323' },
+    { hostname: 'acme-shop.example.dev', path: '^/auth/v1(/.*)?$', service: 'http://localhost:54321' },
+    { hostname: 'acme-shop.example.dev', path: '^/rest/v1(/.*)?$', service: 'http://localhost:54321' },
+    { hostname: 'acme-shop.example.dev', path: '^/storage/v1(/.*)?$', service: 'http://localhost:54321' },
+    { hostname: 'acme-shop.example.dev', path: '^/realtime/v1(/.*)?$', service: 'http://localhost:54321' },
+    { hostname: 'acme-shop.example.dev', service: 'http://localhost:3100' },
+    { hostname: 'mail-acme-shop.example.dev', service: 'http://localhost:54324' },
+    { hostname: 'studio-acme-shop.example.dev', service: 'http://localhost:54323' },
     { service: 'http_status:404' },
   ]);
 });

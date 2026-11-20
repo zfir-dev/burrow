@@ -1,9 +1,9 @@
-# Example tunnel.yml for InkTion (copy into the InkTion checkout as tunnel.yml).
-# With BURROW_DOMAIN=example.dev this gives:
-#   app    -> https://inktion.example.dev
-#   mail   -> https://mail-inktion.example.dev    (Mailpit)
-#   studio -> https://studio-inktion.example.dev  (Supabase Studio)
-project: inktion
+# Example tunnel.yml for a fictional "acme-shop" app with a local Supabase stack.
+# Copy it into your project as tunnel.yml. With BURROW_DOMAIN=example.dev this gives:
+#   app    -> https://acme-shop.example.dev
+#   mail   -> https://mail-acme-shop.example.dev    (Mailpit)
+#   studio -> https://studio-acme-shop.example.dev  (Supabase Studio)
+project: acme-shop
 services:
   - name: app            # "app" is the root service: <project>.<domain>
     url: http://localhost:3100
