@@ -47,6 +47,8 @@ npm link        # puts `burrow` on PATH
    CF_ACCOUNT_ID=...
    CF_ZONE_ID=          # optional
    BURROW_DOMAIN=example.dev
+   BURROW_DASHBOARD_PASSWORD=...   # for burrow dashboard, 12+ characters
+   BURROW_DASHBOARD_PORT=7070
    CLOUDFLARED_BIN=cloudflared
    ```
 
@@ -95,6 +97,10 @@ See [`examples/inktion.tunnel.yml`](examples/inktion.tunnel.yml).
 | `burrow down`                    | Stop **every** running burrow connector (each pid in `~/.local/state/burrow/`) |
 | `burrow destroy [project]`       | Stop `cloudflared`, delete DNS records tagged `burrow:<project>`, delete the tunnel's connections and the tunnel. `burrow down <project> --purge` does the same |
 | `burrow destroy --all`           | Delete every `burrow-*` tunnel and every `burrow:*` DNS record, and stop all local connectors. Asks `[y/N]` first; `--yes` skips the prompt (needed in non-interactive shells) |
+| `burrow dashboard`               | Run the web dashboard in the foreground on `127.0.0.1:7070` |
+| `burrow dashboard up`            | Start the dashboard in the background and expose it at `https://burrow.<domain>` through its own tunnel (`--no-tunnel` for local only) |
+| `burrow dashboard down`          | Stop the dashboard server and its tunnel connector (tunnel and DNS are kept) |
+| `burrow dashboard status`        | Server, connector, URL, whether a password is set |
 | `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state |
 | `burrow status [project]`        | Local process, tunnel health, DNS records |
 | `burrow logs [project]`          | Show the cloudflared log (`-n 200`, `--follow`) |
@@ -116,6 +122,40 @@ where its tunnel.yml lives.
 State lives in `~/.local/state/burrow/`: `<project>.pid`, `<project>.log` and
 `<project>.json` (tunnel id, file path). The tunnel token goes to cloudflared through
 the `TUNNEL_TOKEN` environment variable. It is never written to disk or shown in `ps`.
+
+## Dashboard
+
+`burrow dashboard up` starts a small web UI (Node's built-in `http`, no extra dependencies)
+and runs `burrow up` for a built-in project called `burrow`, which maps
+`https://burrow.<domain>` to `http://localhost:<BURROW_DASHBOARD_PORT>`. Its tunnel is
+`burrow-burrow` with DNS comment `burrow:burrow`, and `burrow` is reserved as a project name.
+
+It shows every burrow project with:
+
+- clickable hostnames
+- local cloudflared state (running/stopped, pid, uptime)
+- connector status from the Cloudflare API (healthy/degraded/down, connections, colos)
+- a live log viewer that streams `~/.local/state/burrow/<project>.log` over SSE
+- **Up** / **Down** / **Destroy** buttons. **Destroy** asks you to type the project name first.
+  The dashboard's own project can't be stopped from the UI.
+
+Security:
+
+- The dashboard won't start unless `BURROW_DASHBOARD_PASSWORD` is set (12+ characters).
+- The password is compared in constant time and is never logged.
+- Sessions use an HMAC-signed, `HttpOnly; Secure; SameSite=Strict` cookie (12 h), also tracked
+  server-side so **Sign out** really ends them. Restarting the server or changing the password
+  signs everyone out.
+- Logins are limited to 5 failed attempts per IP per 15 minutes (429 after that). Behind the
+  tunnel the client IP comes from `CF-Connecting-IP`, which is trusted only from loopback.
+- Every state-changing request needs an `X-Burrow: 1` header (CSRF protection). Responses carry a
+  strict CSP, `X-Frame-Options: DENY` and `no-store`.
+- The server binds to `127.0.0.1` by default, so it is reachable only through the tunnel or
+  locally. Open it over HTTPS (or `http://localhost`), because the Secure cookie isn't sent over
+  plain HTTP to other hosts.
+
+Server state lives in `~/.local/state/burrow/dashboard/server.{pid,log}`. A bare
+`burrow down` also stops the dashboard's tunnel connector, so run `burrow dashboard up` to bring it back.
 
 ## Tests
 
