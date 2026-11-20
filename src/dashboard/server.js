@@ -1,7 +1,8 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { existsSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { existsSync, statSync, openSync, readSync, closeSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { loadConfig } from '../config.js';
 import { assertLabel } from '../naming.js';
 import { logFile } from '../process.js';
@@ -9,7 +10,19 @@ import { collect, invalidateCloudflare } from './data.js';
 import {
   passwordMatches, sessionKey, signSession, verifySession, RateLimiter, parseCookies, newSecret, MIN_PASSWORD_LENGTH,
 } from './auth.js';
-import { LOGIN_HTML, APP_HTML, APP_CSS, APP_JS } from './ui.js';
+import { LOGIN_HTML, APP_HTML, APP_CSS, APP_JS, LOGIN_JS } from './ui.js';
+
+// Vendored front-end libraries, served from node_modules (no CDN, works offline).
+const require = createRequire(import.meta.url);
+export const VENDOR = {
+  '/vendor/alpine.min.js': { pkg: '@alpinejs/csp/dist/cdn.min.js', type: 'text/javascript; charset=utf-8' },
+  '/vendor/pico.min.css': { pkg: '@picocss/pico/css/pico.min.css', type: 'text/css; charset=utf-8' },
+};
+const vendorCache = new Map();
+function vendorAsset(path) {
+  if (!vendorCache.has(path)) vendorCache.set(path, readFileSync(require.resolve(VENDOR[path].pkg)));
+  return vendorCache.get(path);
+}
 
 const BIN = fileURLToPath(new URL('../../bin/burrow.js', import.meta.url));
 const COOKIE = 'burrow_session';
@@ -17,7 +30,8 @@ const SESSION_TTL = 12 * 60 * 60 * 1000;
 
 const SECURITY_HEADERS = {
   'Content-Security-Policy':
-    "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; " +
+    "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'no-referrer',
@@ -135,14 +149,22 @@ export function createDashboard({ password, log = console.log } = {}) {
 
     if (req.method === 'GET' && path === '/app.css') return send(res, 200, APP_CSS, 'text/css; charset=utf-8');
     if (req.method === 'GET' && path === '/healthz') return send(res, 200, 'ok');
+    if (req.method === 'GET' && path === '/favicon.ico') return send(res, 204, '');
+    if (req.method === 'GET' && path === '/login.js') return send(res, 200, LOGIN_JS, 'text/javascript; charset=utf-8');
+    if (req.method === 'GET' && VENDOR[path]) {
+      return send(res, 200, vendorAsset(path), VENDOR[path].type, { 'Cache-Control': 'public, max-age=86400' });
+    }
 
     if (path === '/login') {
       if (req.method === 'GET') return send(res, 200, LOGIN_HTML(''), 'text/html; charset=utf-8');
       if (req.method !== 'POST') return send(res, 405, 'Method not allowed');
       const ip = clientIp(req);
+      const wantsJson = String(req.headers.accept || '').includes('application/json');
       const lim = limiter.check(ip);
       if (!lim.allowed) {
         log(`login rate-limited for ${ip}`);
+        const msg = `Too many attempts. Try again in ${Math.ceil(lim.retryAfter / 60)} min.`;
+        if (wantsJson) return json(res, 429, { error: msg, retryAfter: lim.retryAfter }, { 'Retry-After': String(lim.retryAfter) });
         return send(res, 429, LOGIN_HTML(`Too many attempts. Try again in ${Math.ceil(lim.retryAfter / 60)} min.`),
           'text/html; charset=utf-8', { 'Retry-After': String(lim.retryAfter) });
       }
@@ -151,12 +173,14 @@ export function createDashboard({ password, log = console.log } = {}) {
       if (!passwordMatches(given, password)) {
         limiter.fail(ip);
         log(`login failed from ${ip}`);
+        if (wantsJson) return json(res, 401, { error: 'Wrong password.' });
         return send(res, 401, LOGIN_HTML('Wrong password.'), 'text/html; charset=utf-8');
       }
       limiter.reset(ip);
       const s = signSession(key, SESSION_TTL);
       sessions.set(s.id, s.exp);
       log(`login ok from ${ip}`);
+      if (wantsJson) return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(s.value, SESSION_TTL / 1000) });
       return send(res, 303, '', 'text/plain', { Location: '/', 'Set-Cookie': cookie(s.value, SESSION_TTL / 1000) });
     }
 

@@ -1,145 +1,272 @@
+// Dashboard UI: Pico CSS for styling, Alpine.js (CSP build, no unsafe-eval)
+// for state. Both are vendored from node_modules and served by the server.
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-export const LOGIN_HTML = (message) => `<!doctype html>
+const head = (title, scripts) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>burrow · sign in</title><link rel="stylesheet" href="/app.css"></head>
-<body class="login"><form method="post" action="/login" class="card login-card">
-<h1>burrow</h1><p class="muted">Tunnel dashboard</p>
-${message ? `<p class="error">${esc(message)}</p>` : ''}
-<label>Password<input type="password" name="password" autocomplete="current-password" required autofocus></label>
-<button type="submit" class="primary">Sign in</button></form></body></html>`;
+<meta name="color-scheme" content="light dark"><title>${title}</title>
+<link rel="stylesheet" href="/vendor/pico.min.css"><link rel="stylesheet" href="/app.css">
+${scripts.map((s) => `<script defer src="${s}"></script>`).join('')}
+<script defer src="/vendor/alpine.min.js"></script></head>`;
 
-export const APP_HTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>burrow</title><link rel="stylesheet" href="/app.css"></head>
-<body>
-<header><h1>burrow</h1><span id="cf" class="muted"></span><span class="spacer"></span>
-<button id="refresh">Refresh</button><button id="logout">Sign out</button></header>
-<main>
-<section id="list"><p class="muted">Loading…</p></section>
-<section id="logs" class="card hidden">
-  <div class="logs-head"><h2 id="logs-title">Logs</h2><span class="spacer"></span>
-  <label class="muted"><input type="checkbox" id="follow" checked> follow</label>
-  <button id="logs-clear">Clear</button><button id="logs-close">Close</button></div>
-  <pre id="logs-body"></pre>
-</section>
-<div id="toast" class="hidden"></div>
+export const LOGIN_HTML = (message) => `${head('burrow · sign in', ['/login.js'])}
+<body><main class="container login">
+<article x-data="login" data-message="${esc(message)}">
+  <hgroup><h1>burrow</h1><p>Tunnel dashboard</p></hgroup>
+  <form method="post" action="/login" @submit.prevent="submit">
+    <p class="error" x-show="hasError" x-text="error">${esc(message)}</p>
+    <input type="password" name="password" x-model="password" placeholder="Password" aria-label="Password"
+      autocomplete="current-password" required autofocus>
+    <button type="submit" :aria-busy="busy" :disabled="busy">Sign in</button>
+  </form>
+</article></main></body></html>`;
+
+export const APP_HTML = `${head('burrow', ['/app.js'])}
+<body x-data="dashboard">
+<header class="container"><nav>
+  <ul><li><strong>burrow</strong></li><li><small :class="cfClass" x-text="cfText"></small></li></ul>
+  <ul>
+    <li><button class="secondary outline" @click="load">Refresh</button></li>
+    <li><button class="contrast outline" @click="logout">Sign out</button></li>
+  </ul>
+</nav></header>
+
+<main class="container">
+  <p x-show="loading" aria-busy="true">Loading…</p>
+  <article x-show="empty">No burrow tunnels yet. Run <code>burrow up</code> in a project with a <code>tunnel.yml</code>.</article>
+
+  <div class="overflow-auto" x-show="hasProjects">
+  <table class="striped">
+    <thead><tr><th>Project</th><th>Hostnames</th><th>Local</th><th>Connector</th><th>Uptime</th><th></th></tr></thead>
+    <tbody>
+    <template x-for="p in projects" :key="p.project">
+      <tr>
+        <td><strong x-text="p.project"></strong> <span class="badge" x-show="p.builtIn">dashboard</span></td>
+        <td>
+          <template x-for="h in p.hostnames" :key="h">
+            <div><a :href="hostUrl(h)" target="_blank" rel="noopener noreferrer" x-text="h"></a></div>
+          </template>
+          <small x-show="noHosts(p)">none</small>
+        </td>
+        <td><span class="badge" :class="localClass(p)" x-text="localText(p)"></span><br><small x-text="pidText(p)"></small></td>
+        <td><span class="badge" :class="connClass(p)" x-text="connStatus(p)"></span><br><small x-text="connInfo(p)"></small></td>
+        <td x-text="uptime(p)"></td>
+        <td><div class="actions">
+          <button class="secondary outline" @click="openLogs(p)">Logs</button>
+          <button :disabled="upDisabled(p)" :title="upTitle(p)" :aria-busy="isBusy(p)" @click="act(p, 'up')">Up</button>
+          <button class="secondary" :disabled="downDisabled(p)" :title="downTitle(p)" @click="act(p, 'down')">Down</button>
+          <button class="danger outline" :disabled="p.builtIn" @click="askDestroy(p)">Destroy</button>
+        </div></td>
+      </tr>
+    </template>
+    </tbody>
+  </table>
+  </div>
+
+  <article x-show="logOpen" class="logs">
+    <header class="logs-head">
+      <strong x-text="logTitle"></strong>
+      <span class="spacer"></span>
+      <label><input type="checkbox" role="switch" x-model="follow"> Follow</label>
+      <button class="secondary outline" @click="clearLogs">Clear</button>
+      <button class="secondary outline" @click="closeLogs">Close</button>
+    </header>
+    <pre x-ref="logbody" x-text="logText"></pre>
+  </article>
 </main>
-<script src="/app.js"></script></body></html>`;
+
+<dialog :open="destroyOpen">
+  <article>
+    <header><strong>Destroy <span x-text="destroyName"></span>?</strong></header>
+    <p>This stops cloudflared and deletes the tunnel <code x-text="destroyTunnel"></code> and its DNS records.
+      Type <strong x-text="destroyName"></strong> to confirm.</p>
+    <input type="text" x-model="confirmText" :placeholder="destroyName" aria-label="Project name" autocomplete="off">
+    <footer>
+      <button class="secondary" @click="closeDestroy">Cancel</button>
+      <button class="danger" :disabled="cannotDestroy" @click="confirmDestroy">Destroy</button>
+    </footer>
+  </article>
+</dialog>
+
+<article class="toast" x-show="toastOpen" :class="toastClass" @click="hideToast"><pre x-text="toastText"></pre></article>
+</body></html>`;
 
 export const APP_CSS = `
-:root{--bg:#0f1115;--card:#171a21;--line:#262b36;--text:#e6e8ee;--muted:#8b93a7;--ok:#3ecf8e;--warn:#f5a524;--bad:#f2555a;--accent:#6c8cff}
-*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text)}
-header{display:flex;align-items:center;gap:12px;padding:14px 24px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg)}
-h1{font-size:18px;margin:0}h2{font-size:15px;margin:0}.spacer{flex:1}.muted{color:var(--muted)}.hidden{display:none!important}
-main{max-width:1100px;margin:0 auto;padding:20px 24px;display:grid;gap:16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
-#list{display:grid;gap:12px}
-.row{display:grid;grid-template-columns:1fr auto;gap:10px}
-.title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.name{font-weight:600;font-size:15px}
-.pill{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
-.pill.ok{color:var(--ok);border-color:#1f5f45}.pill.bad{color:var(--bad);border-color:#6b2a2d}.pill.warn{color:var(--warn);border-color:#6b5220}
-.hosts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.hosts a{color:var(--accent);text-decoration:none}.hosts a:hover{text-decoration:underline}
-.meta{margin-top:6px;font-size:12px;color:var(--muted)}
-.actions{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;justify-content:flex-end}
-button{background:#222735;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}
-button:hover{border-color:#3a4256}button:disabled{opacity:.45;cursor:not-allowed}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}button.danger{color:var(--bad)}
-.logs-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-#logs-body{margin:0;height:380px;overflow:auto;background:#0b0d11;border:1px solid var(--line);border-radius:8px;padding:10px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
-#toast{position:fixed;right:20px;bottom:20px;max-width:520px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace}
-.login{display:grid;place-items:center;min-height:100vh}.login-card{width:320px;display:grid;gap:12px}
-.login-card label{display:grid;gap:6px;color:var(--muted)}
-input[type=password]{background:#0b0d11;border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--text);font:inherit}
-.error{color:var(--bad);margin:0}
-@media(max-width:700px){.row{grid-template-columns:1fr}.actions{justify-content:flex-start}}
+.login{min-height:100vh;display:grid;place-items:center}.login article{width:min(360px,100%)}
+.error{color:var(--pico-del-color)}
+.badge{display:inline-block;font-size:.75rem;line-height:1.4;padding:.1rem .5rem;border-radius:999px;
+  border:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color);white-space:nowrap}
+.badge.ok{color:#1f9d55;border-color:#1f9d55}.badge.warn{color:#d97706;border-color:#d97706}.badge.bad{color:#dc2626;border-color:#dc2626}
+.actions{display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end}
+.actions button{padding:.3rem .7rem;font-size:.85rem;margin:0;width:auto}
+button.danger{--pico-background-color:#dc2626;--pico-border-color:#dc2626;--pico-color:#fff}
+button.danger.outline{--pico-background-color:transparent;--pico-color:#dc2626}
+td small{color:var(--pico-muted-color)}
+.logs-head{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}.logs-head label{margin:0}
+.logs-head button{width:auto;margin:0;padding:.3rem .7rem;font-size:.85rem}.spacer{flex:1}
+.logs pre{height:420px;overflow:auto;margin:0;padding:.75rem;font-size:.78rem;white-space:pre-wrap;word-break:break-all}
+.toast{position:fixed;right:1rem;bottom:1rem;max-width:min(560px,calc(100% - 2rem));margin:0;cursor:pointer;z-index:10}
+.toast pre{margin:0;max-height:40vh;overflow:auto;font-size:.78rem;white-space:pre-wrap;background:transparent;padding:0}
+.toast.ok{border-left:4px solid #1f9d55}.toast.bad{border-left:4px solid #dc2626}
+`;
+
+export const LOGIN_JS = `
+document.addEventListener('alpine:init', function () {
+  Alpine.data('login', function () {
+    return {
+      password: '', error: '', busy: false,
+      init: function () { this.error = this.$el.dataset.message || ''; },
+      get hasError() { return this.error.length > 0; },
+      submit: async function () {
+        this.busy = true; this.error = '';
+        try {
+          var r = await fetch('/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+            body: new URLSearchParams({ password: this.password }),
+          });
+          var j = await r.json().catch(function () { return {}; });
+          if (r.ok && j.ok) { location.assign('/'); return; }
+          this.error = j.error || ('Sign in failed (' + r.status + ')');
+          this.password = '';
+        } catch (e) {
+          this.error = 'Network error';
+        } finally { this.busy = false; }
+      },
+    };
+  });
+});
 `;
 
 export const APP_JS = `
-const $ = (s) => document.querySelector(s);
-const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); for (const k of kids) e.append(k); return e; };
-const post = (url, body) => fetch(url, { method: 'POST', headers: { 'X-Burrow': '1', 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
-let es = null, current = null, toastTimer = null;
-
 function ago(ms) {
-  if (ms < 0) ms = 0;
-  const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  if (!(ms > 0)) ms = 0;
+  var s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
   return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + m + 'm' : m ? m + 'm ' + (s % 60) + 's' : s + 's';
 }
-function toast(text, ms = 6000) {
-  const t = $('#toast'); t.textContent = text; t.classList.remove('hidden');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
+function post(url, body) {
+  return fetch(url, { method: 'POST', headers: { 'X-Burrow': '1', 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined });
 }
-async function action(p, act) {
-  let body;
-  if (act === 'destroy') {
-    const typed = prompt('This deletes the tunnel burrow-' + p.project + ' and its DNS records.\\nType "' + p.project + '" to confirm:');
-    if (typed !== p.project) return;
-    body = { confirm: p.project };
-  }
-  toast(act + ' ' + p.project + '…', 60000);
-  const r = await post('/api/tunnels/' + encodeURIComponent(p.project) + '/' + act, body);
-  if (r.status === 401) return location.assign('/login');
-  const j = await r.json().catch(() => ({}));
-  toast((j.ok ? '✓ ' : '✗ ') + act + ' ' + p.project + '\\n' + (j.output || j.error || ''), 10000);
-  load();
-}
-function card(p, now) {
-  const tunnel = p.tunnel;
-  const st = tunnel ? tunnel.status : 'no tunnel';
-  const cls = st === 'healthy' ? 'ok' : st === 'degraded' ? 'warn' : st === 'down' ? 'bad' : '';
-  const title = el('div', { className: 'title' },
-    el('span', { className: 'name', textContent: p.project }),
-    el('span', { className: 'pill ' + (p.running ? 'ok' : ''), textContent: p.running ? 'running' : 'stopped' }),
-    el('span', { className: 'pill ' + cls, textContent: 'connector: ' + st }));
-  if (p.builtIn) title.append(el('span', { className: 'pill', textContent: 'dashboard' }));
-  const hosts = el('div', { className: 'hosts' });
-  for (const h of p.hostnames) hosts.append(el('a', { href: 'https://' + h, target: '_blank', rel: 'noopener noreferrer', textContent: h }));
-  if (!p.hostnames.length) hosts.append(el('span', { className: 'muted', textContent: 'no hostnames' }));
-  const meta = [];
-  if (p.running && p.startedAt) meta.push('up ' + ago(now - p.startedAt) + ' (pid ' + p.pid + ')');
-  if (tunnel && tunnel.connections.length) {
-    const oldest = Math.min(...tunnel.connections.map((c) => Date.parse(c.openedAt)).filter(Boolean));
-    meta.push(tunnel.connections.length + ' connection(s) via ' + [...new Set(tunnel.connections.map((c) => c.colo))].join(', ') + (isFinite(oldest) ? ', connected ' + ago(now - oldest) : ''));
-  }
-  const btn = (label, act, opts = {}) => el('button', { textContent: label, className: opts.cls || '', disabled: !!opts.disabled, title: opts.title || '', onclick: () => action(p, act) });
-  const actions = el('div', { className: 'actions' },
-    el('button', { textContent: 'Logs', onclick: () => openLogs(p.project) }),
-    btn('Up', 'up', { cls: 'primary', disabled: !p.canUp || p.builtIn, title: p.builtIn ? 'Use "burrow dashboard up"' : p.canUp ? '' : 'No remembered tunnel.yml; run burrow up -f on the server' }),
-    btn('Down', 'down', { disabled: !p.running || p.builtIn, title: p.builtIn ? 'Stopping this would cut off the dashboard' : '' }),
-    btn('Destroy', 'destroy', { cls: 'danger', disabled: p.builtIn }));
-  return el('div', { className: 'card row' },
-    el('div', {}, title, hosts, el('div', { className: 'meta', textContent: meta.join(' · ') })), actions);
-}
-async function load() {
-  const r = await fetch('/api/tunnels');
-  if (r.status === 401) return location.assign('/login');
-  const data = await r.json();
-  $('#cf').textContent = data.cloudflare.error ? 'Cloudflare: ' + data.cloudflare.error : 'Cloudflare: connected';
-  const list = $('#list'); list.replaceChildren();
-  if (!data.projects.length) list.append(el('p', { className: 'muted', textContent: 'No burrow tunnels yet. Run "burrow up" in a project with a tunnel.yml.' }));
-  for (const p of data.projects) list.append(card(p, data.now));
-}
-function openLogs(project) {
-  if (es) es.close();
-  current = project;
-  $('#logs').classList.remove('hidden');
-  $('#logs-title').textContent = 'Logs · ' + project;
-  const body = $('#logs-body'); body.textContent = '';
-  es = new EventSource('/api/logs/' + encodeURIComponent(project));
-  es.onmessage = (e) => {
-    body.append(e.data + '\\n');
-    if (body.childNodes.length > 4000) body.firstChild.remove();
-    if ($('#follow').checked) body.scrollTop = body.scrollHeight;
-  };
-  es.onerror = () => { if (es.readyState === 2) body.append('(stream closed)\\n'); };
-  $('#logs').scrollIntoView({ behavior: 'smooth' });
-}
-$('#logs-close').onclick = () => { if (es) es.close(); es = null; current = null; $('#logs').classList.add('hidden'); };
-$('#logs-clear').onclick = () => { $('#logs-body').textContent = ''; };
-$('#refresh').onclick = load;
-$('#logout').onclick = async () => { await post('/logout'); location.assign('/login'); };
-load();
-setInterval(load, 5000);
+var MAX_LOG_LINES = 3000;
+
+document.addEventListener('alpine:init', function () {
+  Alpine.data('dashboard', function () {
+    return {
+      projects: [], loading: true, now: Date.now(), cf: { error: null }, busy: {},
+      logOpen: false, logProject: '', logLines: [], follow: true, es: null,
+      destroyOpen: false, destroyName: '', confirmText: '',
+      toastOpen: false, toastText: '', toastOk: true, toastTimer: null, timer: null,
+
+      init: function () {
+        var self = this;
+        this.load();
+        this.timer = setInterval(function () { self.load(); }, 5000);
+      },
+      load: async function () {
+        try {
+          var r = await fetch('/api/tunnels');
+          if (r.status === 401) { location.assign('/login'); return; }
+          var data = await r.json();
+          this.projects = data.projects; this.cf = data.cloudflare; this.now = data.now;
+        } catch (e) {
+          this.cf = { error: 'dashboard unreachable' };
+        } finally { this.loading = false; }
+      },
+
+      get hasProjects() { return this.projects.length > 0; },
+      get empty() { return !this.loading && this.projects.length === 0; },
+      get cfText() { var e = this.cf.error; return e ? (/^Cloudflare/.test(e) ? e : 'Cloudflare: ' + e) : 'Cloudflare: connected'; },
+      get cfClass() { return this.cf.error ? 'error' : ''; },
+
+      hostUrl: function (h) { return 'https://' + h; },
+      noHosts: function (p) { return p.hostnames.length === 0; },
+      localText: function (p) { return p.running ? 'running' : 'stopped'; },
+      localClass: function (p) { return p.running ? 'ok' : ''; },
+      pidText: function (p) { return p.pid ? 'pid ' + p.pid : ''; },
+      connStatus: function (p) { return p.tunnel ? p.tunnel.status : 'no tunnel'; },
+      connClass: function (p) {
+        var s = p.tunnel && p.tunnel.status;
+        return s === 'healthy' ? 'ok' : s === 'degraded' ? 'warn' : s === 'down' ? 'bad' : '';
+      },
+      connInfo: function (p) {
+        if (!p.tunnel || !p.tunnel.connections.length) return '';
+        var colos = [];
+        p.tunnel.connections.forEach(function (c) { if (colos.indexOf(c.colo) < 0) colos.push(c.colo); });
+        return p.tunnel.connections.length + ' conn · ' + colos.join(', ');
+      },
+      uptime: function (p) {
+        if (p.running && p.startedAt) return ago(this.now - p.startedAt);
+        if (p.tunnel && p.tunnel.connections.length) {
+          var t = Math.min.apply(null, p.tunnel.connections.map(function (c) { return Date.parse(c.openedAt) || Infinity; }));
+          if (isFinite(t)) return ago(this.now - t);
+        }
+        return '—';
+      },
+      isBusy: function (p) { return !!this.busy[p.project]; },
+      upDisabled: function (p) { return p.builtIn || !p.canUp || this.isBusy(p); },
+      upTitle: function (p) {
+        if (p.builtIn) return 'Use "burrow dashboard up" on the server';
+        return p.canUp ? '' : 'No remembered tunnel.yml; run "burrow up -f <file>" on the server once';
+      },
+      downDisabled: function (p) { return p.builtIn || !p.running || this.isBusy(p); },
+      downTitle: function (p) { return p.builtIn ? 'Stopping this would cut off the dashboard' : ''; },
+
+      showToast: function (text, ok, ms) {
+        var self = this;
+        this.toastText = text; this.toastOk = ok; this.toastOpen = true;
+        clearTimeout(this.toastTimer);
+        this.toastTimer = setTimeout(function () { self.toastOpen = false; }, ms || 8000);
+      },
+      hideToast: function () { this.toastOpen = false; },
+      get toastClass() { return this.toastOk ? 'ok' : 'bad'; },
+
+      act: async function (p, action, body) {
+        this.busy[p.project] = true;
+        this.showToast(action + ' ' + p.project + '…', true, 120000);
+        try {
+          var r = await post('/api/tunnels/' + encodeURIComponent(p.project) + '/' + action, body);
+          if (r.status === 401) { location.assign('/login'); return; }
+          var j = await r.json().catch(function () { return {}; });
+          this.showToast((j.ok ? '✓ ' : '✗ ') + action + ' ' + p.project + '\\n' + (j.output || j.error || ''), !!j.ok, 12000);
+        } catch (e) {
+          this.showToast('✗ ' + action + ' ' + p.project + ': network error', false);
+        } finally {
+          this.busy[p.project] = false;
+          this.load();
+        }
+      },
+
+      askDestroy: function (p) { this.destroyName = p.project; this.confirmText = ''; this.destroyOpen = true; },
+      closeDestroy: function () { this.destroyOpen = false; this.confirmText = ''; },
+      get destroyTunnel() { return 'burrow-' + this.destroyName; },
+      get cannotDestroy() { return this.confirmText !== this.destroyName; },
+      confirmDestroy: function () {
+        if (this.cannotDestroy) return;
+        var name = this.destroyName;
+        this.closeDestroy();
+        this.act({ project: name }, 'destroy', { confirm: name });
+      },
+
+      get logTitle() { return 'Logs · ' + this.logProject; },
+      get logText() { return this.logLines.join('\\n'); },
+      openLogs: function (p) {
+        var self = this;
+        this.closeLogs();
+        this.logProject = p.project; this.logLines = []; this.logOpen = true;
+        this.es = new EventSource('/api/logs/' + encodeURIComponent(p.project));
+        this.es.onmessage = function (e) {
+          self.logLines.push(e.data);
+          if (self.logLines.length > MAX_LOG_LINES) self.logLines.splice(0, self.logLines.length - MAX_LOG_LINES);
+          if (self.follow) self.$nextTick(function () { var el = self.$refs.logbody; el.scrollTop = el.scrollHeight; });
+        };
+        this.es.onerror = function () { if (self.es && self.es.readyState === 2) self.logLines.push('(stream closed)'); };
+      },
+      clearLogs: function () { this.logLines = []; },
+      closeLogs: function () { if (this.es) this.es.close(); this.es = null; this.logOpen = false; },
+
+      logout: async function () { await post('/logout'); location.assign('/login'); },
+    };
+  });
+});
 `;

@@ -125,10 +125,18 @@ the `TUNNEL_TOKEN` environment variable. It is never written to disk or shown in
 
 ## Dashboard
 
-`burrow dashboard up` starts a small web UI (Node's built-in `http`, no extra dependencies)
-and runs `burrow up` for a built-in project called `burrow`, which maps
+`burrow dashboard up` starts a small web UI and runs `burrow up` for a built-in project called `burrow`, which maps
 `https://burrow.<domain>` to `http://localhost:<BURROW_DASHBOARD_PORT>`. Its tunnel is
 `burrow-burrow` with DNS comment `burrow:burrow`, and `burrow` is reserved as a project name.
+
+The server is Node's built-in `http`. The UI uses [Pico CSS](https://picocss.com) (automatic
+light/dark theme) and [Alpine.js](https://alpinejs.dev) with **no build step**. Both are npm
+dependencies pinned to exact versions (`@picocss/pico` 2.1.1, `@alpinejs/csp` 3.17.5). The
+server serves them from `node_modules` at `/vendor/pico.min.css` and `/vendor/alpine.min.js`,
+so the dashboard works offline and never loads anything from a CDN. It uses Alpine's
+[CSP build](https://alpinejs.dev/advanced/csp), so the Content-Security-Policy needs neither
+`'unsafe-eval'` nor `'unsafe-inline'` (`script-src 'self'; style-src 'self'`). All UI logic is
+in `Alpine.data()` components in `src/dashboard/ui.js`.
 
 It shows every burrow project with:
 
@@ -136,13 +144,14 @@ It shows every burrow project with:
 - local cloudflared state (running/stopped, pid, uptime)
 - connector status from the Cloudflare API (healthy/degraded/down, connections, colos)
 - a live log viewer that streams `~/.local/state/burrow/<project>.log` over SSE
-- **Up** / **Down** / **Destroy** buttons. **Destroy** asks you to type the project name first.
+- **Up** / **Down** / **Destroy** buttons. **Destroy** opens a dialog and stays disabled until you type the project name.
   The dashboard's own project can't be stopped from the UI.
 
 Security:
 
 - The dashboard won't start unless `BURROW_DASHBOARD_PASSWORD` is set (12+ characters).
-- The password is compared in constant time and is never logged.
+- The password is compared in constant time and is never logged. The login form posts with
+  `fetch` (JSON), and a plain HTML form post still works without JavaScript.
 - Sessions use an HMAC-signed, `HttpOnly; Secure; SameSite=Strict` cookie (12 h), also tracked
   server-side so **Sign out** really ends them. Restarting the server or changing the password
   signs everyone out.

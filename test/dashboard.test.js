@@ -144,3 +144,46 @@ test('HTTP: SSE log stream sends existing lines', async () => {
     server.close();
   }
 });
+
+test('HTTP: vendored Alpine (CSP build) and Pico are served without login; JSON login works', async () => {
+  const server = createDashboard({ password: PASSWORD, log: () => {} });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    let r = await fetch(`${base}/vendor/alpine.min.js`);
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get('content-type'), /javascript/);
+    assert.ok((await r.text()).length > 10000);
+    r = await fetch(`${base}/vendor/pico.min.css`);
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get('content-type'), /text\/css/);
+    assert.match(await r.text(), /Pico CSS/);
+    assert.equal((await fetch(`${base}/login.js`)).status, 200);
+    assert.equal((await fetch(`${base}/vendor/nope.js`, { redirect: 'manual' })).status, 303);
+
+    const csp = (await fetch(`${base}/login`)).headers.get('content-security-policy');
+    assert.match(csp, /script-src 'self'/);
+    assert.doesNotMatch(csp, /unsafe-eval|unsafe-inline/);
+
+    const html = await (await fetch(`${base}/login`)).text();
+    assert.match(html, /\/vendor\/alpine\.min\.js/);
+    assert.match(html, /\/vendor\/pico\.min\.css/);
+
+    const login = (pw) => fetch(`${base}/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams({ password: pw }),
+    });
+    r = await login('nope');
+    assert.equal(r.status, 401);
+    assert.equal((await r.json()).error, 'Wrong password.');
+    r = await login(PASSWORD);
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { ok: true });
+    const cookie = r.headers.get('set-cookie').split(';')[0];
+    const app = await (await fetch(`${base}/`, { headers: { cookie } })).text();
+    assert.match(app, /x-data="dashboard"/);
+    assert.match(await (await fetch(`${base}/app.js`, { headers: { cookie } })).text(), /Alpine\.data\('dashboard'/);
+  } finally {
+    server.close();
+  }
+});
