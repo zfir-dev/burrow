@@ -203,6 +203,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       if (!passwordMatches(given, password)) {
         limiter.fail(ip);
         log(`login failed from ${ip}`);
+        events.emit('event', { action: 'sign-in', ok: false, detail: `wrong password from ${ip}` });
         if (wantsJson) return json(res, 401, { error: 'Wrong password.' });
         return send(res, 401, LOGIN_HTML('Wrong password.'), 'text/html; charset=utf-8');
       }
@@ -210,6 +211,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       const s = signSession(key, SESSION_TTL);
       sessions.set(s.id, s.exp);
       log(`login ok from ${ip}`);
+      events.emit('event', { action: 'sign-in', detail: `from ${ip}` });
       if (wantsJson) return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(s.value, SESSION_TTL / 1000) });
       return send(res, 303, '', 'text/plain', { Location: '/', 'Set-Cookie': cookie(s.value, SESSION_TTL / 1000) });
     }
@@ -226,6 +228,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
 
     if (req.method === 'POST' && path === '/logout') {
       sessions.delete(sid);
+      events.emit('event', { action: 'sign-out', detail: `from ${clientIp(req)}` });
       return json(res, 200, { ok: true }, { 'Set-Cookie': cookie('', 0) });
     }
     if (req.method === 'GET' && path === '/') return send(res, 200, P.html, 'text/html; charset=utf-8');
