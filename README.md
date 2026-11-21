@@ -102,6 +102,7 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | `burrow dashboard`               | Run the web dashboard in the foreground on `127.0.0.1:7070` |
 | `burrow dashboard up`            | Start the dashboard in the background and expose it at `https://burrow.<domain>` through its own tunnel (`--no-tunnel` for local only) |
 | `burrow dashboard down`          | Stop the dashboard server and its tunnel connector (tunnel and DNS are kept) |
+| `burrow completion bash\|zsh`    | Print a completion script for commands, options and project names. Add `source <(burrow completion zsh)` (or `bash`) to your shell rc file |
 | `burrow dashboard status`        | Server, connector, URL, whether a password is set |
 | `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state |
 | `burrow status [project]`        | Local process, tunnel health, DNS records |
