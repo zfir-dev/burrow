@@ -16,6 +16,15 @@ const wrap = (fn) => async (...args) => {
 };
 
 program.command('init').description('write the config template, or verify the API token').action(wrap(() => cmd.init({})));
+program.command('add [project]')
+  .description('create a tunnel.yml (prompts, or use flags)')
+  .option('-f, --file <path>', 'where to write', 'tunnel.yml')
+  .option('--app <target>', 'root service: port or URL')
+  .option('--path <prefix=target>', 'extra path on the app (repeatable)', (v, a) => a.concat(v), [])
+  .option('--service <name=target>', 'sub-service (repeatable)', (v, a) => a.concat(v), [])
+  .option('--force', 'overwrite an existing file')
+  .option('-y, --yes', 'never prompt')
+  .action(wrap(async (p, o) => (await import('../src/add.js')).add(p, o)));
 program.command('up [project]')
   .description('create/reuse tunnel, set ingress and DNS, start cloudflared')
   .option('-f, --file <path>', 'path to tunnel.yml')
