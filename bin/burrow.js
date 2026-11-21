@@ -7,6 +7,16 @@ import * as dash from '../src/dashboard/manage.js';
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const program = new Command();
 program.name('burrow').description('Manage Cloudflare Tunnels for local projects').version(pkg.version);
+program.command('completion <shell>')
+  .description('print a shell completion script: bash | zsh')
+  .action(async (shell) => {
+    try { (await import('../src/completion.js')).completion(shell, program); } catch (e) {
+      console.error(`burrow: ${e.message}`);
+      process.exitCode = 1;
+    }
+  });
+program.command('__complete <what>', { hidden: true })
+  .action(async (what) => (await import('../src/completion.js')).complete(what));
 
 const wrap = (fn) => async (...args) => {
   try { await fn(...args); } catch (e) {
