@@ -248,6 +248,11 @@ Everything found is pre-selected; untick what you want to keep. **Delete** asks 
 `delete`. The server then scans again and deletes only picks that are still orphans (the DNS
 records of a deleted tunnel go with it), so an out-of-date page can't delete a live tunnel.
 
+DNS records are checked in every zone burrow knows about: `BURROW_DOMAIN`'s, the zones of
+projects with their own [`domain:`](docs/domains.md), and zones cached from earlier runs. The
+page lists the zones it checked; a zone whose DNS can't be read (for example a domain since
+removed from the account) is shown as **not scanned** and skipped, and the rest still works.
+
 ### Bulk actions and auto-start
 
 _Not merged yet (`feature/ui-bulk`)._
