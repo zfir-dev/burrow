@@ -33,3 +33,5 @@ projects:
       - name: app
         url: http://localhost:3100
 ```
+
+Temporary shares (`burrow share`) are never exported; burrow notes how many were skipped.
