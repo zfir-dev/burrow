@@ -15,6 +15,17 @@ const wrap = (fn) => async (...args) => {
   }
 };
 
+program.command('export [file]')
+  .description('export remembered project configs (no secrets) to a file or stdout')
+  .option('--project <list>', 'comma-separated projects (default: all)')
+  .option('--json', 'JSON instead of YAML')
+  .action(wrap(async (f, o) => (await import('../src/transfer.js')).exportProjects(f, o)));
+program.command('import <file>')
+  .description('import project configs from a burrow export')
+  .option('--dir <dir>', 'where to write the tunnel.yml files (default ~/.config/burrow/projects)')
+  .option('--force', 'replace existing files and remembered paths')
+  .option('--dry-run', 'print what would be written')
+  .action(wrap(async (f, o) => (await import('../src/transfer.js')).importProjects(f, o)));
 program.command('init').description('write the config template, or verify the API token').action(wrap(() => cmd.init({})));
 program.command('up [project]')
   .description('create/reuse tunnel, set ingress and DNS, start cloudflared')
