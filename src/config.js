@@ -23,6 +23,8 @@ BURROW_DOMAIN=
 # Dashboard login (burrow dashboard). At least 12 characters.
 BURROW_DASHBOARD_PASSWORD=
 BURROW_DASHBOARD_PORT=7070
+# Projects "burrow service" brings up at boot (comma-separated), besides autostart: true
+BURROW_AUTOSTART=
 # Optional path to the cloudflared binary
 CLOUDFLARED_BIN=cloudflared
 `;
@@ -55,6 +57,7 @@ export function loadConfig() {
     cloudflared: pick('CLOUDFLARED_BIN') || 'cloudflared',
     dashboardPassword: pick('BURROW_DASHBOARD_PASSWORD'),
     dashboardPort: pick('BURROW_DASHBOARD_PORT') || '7070',
+    autostart: pick('BURROW_AUTOSTART'),
   };
 }
 

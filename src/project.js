@@ -74,7 +74,7 @@ export function parseProject(text, source = 'tunnel.yml') {
     seen.add(key);
     return svc;
   });
-  return { project, services, source };
+  return { project, services, source, autostart: doc.autostart === true };
 }
 
 export function hostnames(proj, domain) {
