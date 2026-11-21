@@ -242,13 +242,17 @@ export async function destroy(projectArg, opts) {
   for (const p of projects) await destroyOne(cf, p, false);
 }
 
-export async function ls() {
+export async function ls(opts = {}) {
   const cfg = loadConfig();
   requireConfig(cfg, ['token', 'accountId', 'domain']);
   const cf = client(cfg);
   await cf.resolveZoneId(cfg.domain);
   const tunnels = (await cf.listTunnels()).filter((t) => t.name.startsWith('burrow-'));
   const records = await cf.recordsByCommentPrefix('burrow:');
+  if (opts.json) {
+    log(JSON.stringify(tunnels.map((t) => tunnelJson(t, records)), null, 2));
+    return;
+  }
   if (!tunnels.length) { log('No burrow tunnels.'); return; }
   for (const t of tunnels) {
     const project = t.name.slice('burrow-'.length);
@@ -259,25 +263,52 @@ export async function ls() {
   }
 }
 
-export async function status(projectArg, opts) {
+// JSON shape shared by `ls --json` and `status --json`. No secrets, no origin IPs.
+function tunnelJson(t, records) {
+  const project = t.name.slice('burrow-'.length);
+  const pid = runningPid(project);
+  return {
+    project,
+    running: !!pid,
+    pid: pid || null,
+    hostnames: records.filter((r) => r.comment === recordComment(project)).map((r) => r.name).sort(),
+    tunnel: {
+      id: t.id,
+      name: t.name,
+      status: t.status || 'unknown',
+      connections: (t.connections || []).map((c) => ({ colo: c.colo_name, openedAt: c.opened_at, version: c.client_version })),
+    },
+  };
+}
+
+export async function status(projectArg, opts = {}) {
   const project = resolveName(projectArg, opts);
   const cfg = loadConfig();
   const pid = runningPid(project);
+  const configured = !!(cfg.token && cfg.accountId && cfg.domain);
+  let t = null;
+  let records = [];
+  if (configured) {
+    const cf = client(cfg);
+    await cf.resolveZoneId(cfg.domain);
+    t = await cf.findTunnel(tunnelName(project));
+    if (t) records = await cf.recordsByComment(recordComment(project));
+  }
+  if (opts.json) {
+    log(JSON.stringify({
+      project, running: !!pid, pid: pid || null, log: logFile(project), cloudflare: configured,
+      tunnel: t && { id: t.id, name: t.name, status: t.status || 'unknown', connections: tunnelJson(t, []).tunnel.connections },
+      records: records.map((r) => ({ type: r.type, name: r.name, content: r.content, proxied: !!r.proxied })),
+    }, null, 2));
+    return;
+  }
   log(`Project: ${project}`);
   log(`Local cloudflared: ${pid ? `running (pid ${pid})` : 'stopped'}`);
   log(`Log: ${logFile(project)}`);
-  if (!cfg.token || !cfg.accountId || !cfg.domain) {
-    log('Cloudflare: not configured (run "burrow init")');
-    return;
-  }
-  const cf = client(cfg);
-  await cf.resolveZoneId(cfg.domain);
-  const t = await cf.findTunnel(tunnelName(project));
+  if (!configured) { log('Cloudflare: not configured (run "burrow init")'); return; }
   if (!t) { log(`Tunnel ${tunnelName(project)}: not found`); return; }
   log(`Tunnel ${t.name}: ${t.status} (${t.id}), ${t.connections?.length || 0} connection(s)`);
-  for (const r of await cf.recordsByComment(recordComment(project))) {
-    log(`  ${r.type} https://${r.name} -> ${r.content}${r.proxied ? ' (proxied)' : ''}`);
-  }
+  for (const r of records) log(`  ${r.type} https://${r.name} -> ${r.content}${r.proxied ? ' (proxied)' : ''}`);
 }
 
 export async function logs(projectArg, opts) {
