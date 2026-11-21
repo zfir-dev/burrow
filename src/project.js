@@ -69,6 +69,15 @@ export function parseProject(text, source = 'tunnel.yml') {
     });
     const svc = { name, root, url: s.url, paths };
     if (s.originRequest) svc.originRequest = s.originRequest;
+    if (s.private !== undefined && typeof s.private !== 'boolean') throw new Error(`${where}: "private" must be true or false`);
+    if (s.private) svc.private = true;
+    if (s.allow !== undefined) {
+      if (!s.private) throw new Error(`${where}: "allow" only applies with private: true`);
+      const allow = (Array.isArray(s.allow) ? s.allow : String(s.allow).split(',')).map((e) => String(e).trim().toLowerCase()).filter(Boolean);
+      const bad = allow.filter((e) => !/^[^@\s,]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(e) && !/^@[a-z0-9.-]+\.[a-z]{2,}$/.test(e));
+      if (bad.length) throw new Error(`${where}: invalid "allow" entries ${bad.join(', ')} (use emails or @domain)`);
+      svc.allow = allow;
+    }
     const key = root ? '@root' : name;
     if (seen.has(key)) throw new Error(`${where}: duplicate ${root ? 'root service' : `service "${name}"`}`);
     seen.add(key);
