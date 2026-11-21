@@ -14,6 +14,16 @@ const wrap = (fn) => async (...args) => {
     process.exitCode = 1;
   }
 };
+program.command('url [project]')
+  .description("print a project's public URLs")
+  .option('-f, --file <path>', 'path to tunnel.yml')
+  .option('--plain', 'URLs only, one per line')
+  .action(wrap(async (p, o) => (await import('../src/open.js')).url(p, o)));
+program.command('open [project] [service]')
+  .description('open a project URL in the browser (the app, or the given service)')
+  .option('-f, --file <path>', 'path to tunnel.yml')
+  .option('--print', 'print the URL instead of opening it')
+  .action(wrap(async (p, s, o) => (await import('../src/open.js')).open(p, s, o)));
 
 program.command('init').description('write the config template, or verify the API token').action(wrap(() => cmd.init({})));
 program.command('up [project]')
