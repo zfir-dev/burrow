@@ -4,6 +4,7 @@ import { Cloudflare } from '../cloudflare.js';
 import { recordComment, tunnelName } from '../naming.js';
 import { localProjects, runningPid, pidFile, readMeta } from '../process.js';
 import { DASHBOARD_PROJECT } from '../project.js';
+import { recordsEverywhere } from '../zones.js';
 
 function metaProjects() {
   try {
@@ -23,8 +24,7 @@ async function cloudflareState(cfg) {
   if (Date.now() - cache.at < 10000) return cache;
   try {
     const cf = new Cloudflare({ token: cfg.token, accountId: cfg.accountId, zoneId: cfg.zoneId });
-    await cf.resolveZoneId(cfg.domain);
-    const [tunnels, records] = await Promise.all([cf.listTunnels(), cf.recordsByCommentPrefix('burrow:')]);
+    const [tunnels, records] = await Promise.all([cf.listTunnels(), recordsEverywhere(cf, cfg, { prefix: 'burrow:' })]);
     cache = { at: Date.now(), data: { tunnels: tunnels.filter((t) => t.name.startsWith('burrow-')), records }, error: null };
   } catch (e) {
     cache = { at: Date.now(), data: null, error: e.message };

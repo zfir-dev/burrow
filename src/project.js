@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import YAML from 'yaml';
-import { assertLabel, hostnameFor } from './naming.js';
+import { assertDomain, assertLabel, hostnameFor } from './naming.js';
 
 export const DEFAULT_FILE = 'tunnel.yml';
 
@@ -49,6 +49,11 @@ export function parseProject(text, source = 'tunnel.yml') {
   const project = String(doc.project ?? '').trim();
   assertLabel(project, `project name in ${source}`);
   if (project === DASHBOARD_PROJECT) throw new Error(`${source}: "${DASHBOARD_PROJECT}" is reserved for the dashboard`);
+  let domain;
+  if (doc.domain !== undefined && doc.domain !== null && doc.domain !== '') {
+    domain = String(doc.domain).trim().toLowerCase().replace(/\.$/, '');
+    try { assertDomain(domain); } catch { throw new Error(`${source}: invalid domain "${doc.domain}" (e.g. domain: example.org)`); }
+  }
   if (!Array.isArray(doc.services) || doc.services.length === 0) {
     throw new Error(`${source}: "services" must be a non-empty list`);
   }
@@ -74,7 +79,7 @@ export function parseProject(text, source = 'tunnel.yml') {
     seen.add(key);
     return svc;
   });
-  return { project, services, source, autostart: doc.autostart === true };
+  return { project, services, source, autostart: doc.autostart === true, ...(domain ? { domain } : {}) };
 }
 
 export function hostnames(proj, domain) {
