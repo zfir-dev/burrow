@@ -228,7 +228,20 @@ _Not merged yet (`feature/ui-quick-actions`)._
 
 ### Event history
 
-_Not merged yet (`feature/ui-history`)._
+**History** in the top bar lists what changed and when: `up`, `down`, `destroy`, `restart`,
+`share`, `prune`, `add`, `edit`, `import`, `autostart`, `service install|uninstall`,
+`dashboard up|down` and `update`, with the project, the result (ok/failed), how long it took and
+where it came from:
+
+- `cli`: you ran it in a shell
+- `dashboard`: a button in the dashboard (the dashboard runs the CLI with `BURROW_SOURCE=dashboard`),
+  or a dashboard-only action such as saving a `tunnel.yml` from the form
+- `boot`: `burrow autostart` from the systemd unit
+
+Filter by project or source. Read-only commands (`ls`, `status`, `logs`, `stats`, …) and
+`--dry-run` aren't recorded. Events are JSON Lines in `~/.local/state/burrow/history/events.jsonl`
+(mode 600, no secrets); past 1 MB the file is cut to the newest 2000 events. Recording is best
+effort and never makes a command fail.
 
 ### Alerts
 
