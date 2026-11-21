@@ -22,6 +22,12 @@ program.command('up [project]')
   .option('--dry-run', 'print the plan without calling Cloudflare or starting anything')
   .option('--force', 'replace DNS records not managed by burrow on the same hostnames')
   .action(wrap((p, o) => cmd.up(p, o)));
+program.command('share <target>')
+  .description('share a local port or URL on a temporary <random>.<domain> hostname')
+  .option('--name <label>', 'pick the hostname label instead of a random one')
+  .option('--detach', 'keep running in the background (remove with burrow down)')
+  .option('--dry-run', 'print the plan only')
+  .action(wrap(async (t, o) => (await import('../src/share.js')).share(t, o)));
 program.command('down [project]')
   .description('stop cloudflared (all running projects when none is given); keeps tunnel and DNS')
   .option('-f, --file <path>', 'path to tunnel.yml')
