@@ -335,7 +335,15 @@ effort and never makes a command fail.
 
 ### Cleanup
 
-_Not merged yet (`feature/ui-cleanup`)._
+**Cleanup** in the top bar scans Cloudflare for orphans with the same rules as
+[`burrow prune`](docs/prune.md): `burrow-*` tunnels with no local state on this machine, and
+`burrow:*` DNS records whose tunnel is gone, points elsewhere, or is an orphan itself. Tunnels with
+live connections but no local state (probably another machine) are left out unless you switch on
+**Include tunnels with live connections**.
+
+Everything found is pre-selected; untick what you want to keep. **Delete** asks you to type
+`delete`. The server then scans again and deletes only picks that are still orphans (the DNS
+records of a deleted tunnel go with it), so an out-of-date page can't delete a live tunnel.
 
 ### Bulk actions and auto-start
 
