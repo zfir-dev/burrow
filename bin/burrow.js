@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+// node-guard:start
+if (Number(process.versions.node.split('.')[0]) < 18) {
+  console.error(`burrow needs Node.js 18 or newer (found ${process.versions.node}).`);
+  process.exit(1);
+}
+// node-guard:end
 import { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import * as cmd from '../src/commands.js';
