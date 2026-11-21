@@ -11,6 +11,7 @@ import {
 import {
   runningPid, startConnector, stopConnector, logFile, pidFile, saveMeta, readMeta, removeMeta, localProjects,
 } from './process.js';
+import { runHook, hookContext, beforeDown, afterDown, stopBackground } from './hooks.js';
 import { isShare, removeShare } from './share.js';
 
 const log = (...a) => console.log(...a);
@@ -85,6 +86,7 @@ export async function up(projectArg, opts) {
   const ingress = buildIngress(proj, cfg.domain);
 
   log(`Project ${proj.project} (${file})`);
+  await runHook('pre_up', hookContext(proj, file, hosts), { dry, enabled: opts.hooks !== false });
   if (dry) {
     step(dry, `would create or reuse remotely-managed tunnel ${name}`);
     step(dry, 'would PUT ingress config:');
@@ -145,6 +147,7 @@ export async function up(projectArg, opts) {
   saveMeta(proj.project, { project: proj.project, file, tunnelId: tunnel.id, tunnelName: name, hostnames: [...wanted] });
   log(`cloudflared started (pid ${pid}), log ${logFile(proj.project)}`);
   for (const h of hosts) log(`  ${h.service.padEnd(10)} https://${h.hostname}`);
+  await runHook('post_up', hookContext(proj, file, hosts, { BURROW_TUNNEL_ID: tunnel.id }), { enabled: opts.hooks !== false, soft: true });
 }
 
 // Stop cloudflared only. Tunnel and DNS stay, so the next `burrow up` is fast.
@@ -160,10 +163,13 @@ export async function down(projectArg, opts) {
     if (dry) {
       step(dry, pid ? `would stop ${project} cloudflared (pid ${pid})` : `${project}: not running`);
       if (temp) step(dry, `would delete share ${project} (tunnel and DNS)`);
+      await beforeDown(project, opts);
       continue;
     }
+    const hookCtx = await beforeDown(project, opts);
     const stopped = await stopConnector(project);
     log(stopped ? `${project}: stopped cloudflared (pid ${stopped})` : `${project}: not running`);
+    await afterDown(project, hookCtx, opts);
     if (temp) {
       await removeShare(project);
       log(`${project}: share removed (tunnel and DNS deleted)`);
@@ -193,6 +199,8 @@ async function destroyOne(cf, project, dry) {
     return;
   }
   const stopped = await stopConnector(project);
+  const bg = await stopBackground(project);
+  if (bg) log(`${project}: stopped pre_up background process (pid ${bg})`);
   log(stopped ? `${project}: stopped cloudflared (pid ${stopped})` : `${project}: cloudflared was not running`);
   for (const r of await cf.recordsByComment(comment)) {
     await cf.deleteRecord(r.id);
