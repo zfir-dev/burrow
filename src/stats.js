@@ -61,13 +61,13 @@ export function formatBytes(n) {
 
 const num = (n) => Number(n).toLocaleString('en-US');
 
-async function graphql(token, variables) {
+export async function graphql(token, variables, query = QUERY) {
   let res;
   try {
     res = await fetch(endpoint(), {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: QUERY, variables }),
+      body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(30000),
     });
   } catch (e) {
@@ -84,8 +84,8 @@ async function graphql(token, variables) {
   return json.data;
 }
 
-export async function stats(projectArg, opts = {}) {
-  const cfg = loadConfig();
+// Totals per hostname for one project (used by `burrow stats` and the dashboard).
+export async function fetchStats(projectArg, opts = {}, cfg = loadConfig()) {
   requireConfig(cfg, ['token', 'domain']);
   const { project, urls } = projectUrls(projectArg, opts, cfg);
   const hosts = [...new Set(urls.map((u) => new URL(u.url).hostname))];
@@ -102,6 +102,62 @@ export async function stats(projectArg, opts = {}) {
     count, dimensions: { clientRequestHTTPHost: 'total', edgeResponseStatus: code },
   }))), ['total'])[0];
   total.bytes = rows.reduce((a, r) => a + r.bytes, 0);
+  return { project, hosts, since, until, zoneTag, rows, total };
+}
+
+// Requests, 4xx, 5xx and bytes over time: 15-minute buckets up to 6 h, hourly beyond.
+export const seriesQuery = (dim) => `query BurrowSeries($zoneTag: string, $filter: ZoneHttpRequestsAdaptiveGroupsFilter_InputObject) {
+  viewer {
+    zones(filter: { zoneTag: $zoneTag }) {
+      httpRequestsAdaptiveGroups(limit: 10000, filter: $filter) {
+        count
+        sum { edgeResponseBytes }
+        dimensions { ${dim} clientRequestHTTPHost edgeResponseStatus }
+      }
+    }
+  }
+}`;
+
+export function bucketSpec(since, until) {
+  return until - since <= 6 * 3600e3 ? { dim: 'datetimeFifteenMinutes', step: 15 * 60e3 } : { dim: 'datetimeHour', step: 3600e3 };
+}
+
+// { all: [{ t, requests, e4xx, e5xx, bytes }], '<hostname>': [...] } with empty buckets filled in.
+export function aggregateSeries(groups, hosts, { since, until, dim, step }) {
+  const start = Math.floor(since.getTime() / step) * step;
+  const times = [];
+  for (let t = start; t < until.getTime(); t += step) times.push(t);
+  const blank = () => times.map((t) => ({ t, requests: 0, e4xx: 0, e5xx: 0, bytes: 0 }));
+  const out = { all: blank() };
+  for (const h of hosts) out[h] = blank();
+  for (const g of groups || []) {
+    const host = g.dimensions?.clientRequestHTTPHost;
+    if (!out[host]) continue;
+    const t = Date.parse(g.dimensions?.[dim]);
+    const i = Math.floor((t - start) / step);
+    if (!(i >= 0 && i < times.length)) continue;
+    const n = Number(g.count) || 0;
+    const code = String(g.dimensions?.edgeResponseStatus ?? '');
+    for (const b of [out.all[i], out[host][i]]) {
+      b.requests += n;
+      b.bytes += Number(g.sum?.edgeResponseBytes) || 0;
+      if (code[0] === '4') b.e4xx += n;
+      if (code[0] === '5') b.e5xx += n;
+    }
+  }
+  return out;
+}
+
+export async function fetchSeries({ cfg, zoneTag, hosts, since, until }) {
+  const spec = bucketSpec(since.getTime(), until.getTime());
+  const data = await graphql(cfg.token, {
+    zoneTag, filter: { datetime_geq: iso(since), datetime_lt: iso(until), clientRequestHTTPHost_in: hosts },
+  }, seriesQuery(spec.dim));
+  return { step: spec.step, series: aggregateSeries(data?.viewer?.zones?.[0]?.httpRequestsAdaptiveGroups, hosts, { since, until, ...spec }) };
+}
+
+export async function stats(projectArg, opts = {}) {
+  const { project, since, until, zoneTag, rows, total } = await fetchStats(projectArg, opts, loadConfig());
 
   if (opts.json) {
     log(JSON.stringify({
