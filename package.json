@@ -2,6 +2,13 @@
   "name": "burrow",
   "version": "0.1.0",
   "description": "burrow: manage Cloudflare Tunnels, DNS and cloudflared for local projects",
+  "keywords": [
+    "cloudflare",
+    "cloudflare-tunnel",
+    "cloudflared",
+    "dns",
+    "cli"
+  ],
   "type": "module",
   "bin": {
     "burrow": "bin/burrow.js"
