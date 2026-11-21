@@ -227,9 +227,23 @@ paths on the app, sub-services and `autostart`. **Check** shows the hostnames an
 - New files go to `~/.config/burrow/projects/<project>.tunnel.yml` (where `burrow import` puts
   them) and are remembered, so **Up** works straight away. Existing names are refused.
 - Edits go to the file `burrow up` remembered. They're made in place, so comments and keys the
-  form doesn't show (`hooks`, `domain`, `private`, `originRequest`, …) are kept. Renaming a
-  project isn't supported here; the dashboard's own project and shares can't be edited.
+  form doesn't show (`hooks`, `domain`, `private`, `originRequest`, …) are kept. The
+  dashboard's own project and shares can't be edited.
 - The browser never sends a file path.
+
+**Rename…** in the edit form renames a project. Hostnames and the tunnel name are built from the
+project name, so a rename really replaces the project in Cloudflare, and it's done the safe way:
+
+1. The project must be stopped (**Down** first); the dialog shows every old → new hostname before
+   anything happens, and names already used locally or by a Cloudflare tunnel are refused.
+2. `burrow destroy <old>` deletes the old tunnel and DNS records. If that fails, nothing else is
+   changed.
+3. Only `project:` in `tunnel.yml` changes (comments and other keys stay); a file in
+   `~/.config/burrow/projects/` is renamed to `<new>.tunnel.yml`. The new name is remembered.
+4. Optionally `burrow up <new>` creates the new tunnel and DNS records straight away.
+
+Old URLs stop working. The old project's log file is kept under its old name.
+`POST /api/projects/<old>/rename {to, confirm: true, up}`; `dryRun: true` only returns the plan.
 
 ### Local port health
 

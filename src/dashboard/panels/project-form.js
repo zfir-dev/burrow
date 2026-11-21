@@ -1,14 +1,15 @@
 // Panel: add or edit a project from the dashboard. Writes a validated tunnel.yml and
 // can run `burrow up` right after. File paths never come from the browser: new files
 // go where `burrow import` puts them, edits go to the file `burrow up` remembered.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assertLabel } from '../../naming.js';
+import { assertLabel, tunnelName } from '../../naming.js';
 import { parseProject, hostnames, DASHBOARD_PROJECT } from '../../project.js';
-import { readMeta, saveMeta } from '../../process.js';
+import { readMeta, runningPid, saveMeta } from '../../process.js';
 import { isShare } from '../../share.js';
 import { defaultImportDir } from '../../transfer.js';
-import { formFromText, renderNew, renderEdit } from '../../project-form.js';
+import { Cloudflare } from '../../cloudflare.js';
+import { formFromText, renderNew, renderEdit, renameText } from '../../project-form.js';
 
 export const order = 10;
 
@@ -32,6 +33,8 @@ export async function enrich(projects) {
 
 export async function route(ctx) {
   const { method, path } = ctx;
+  const rm = path.match(/^\/api\/projects\/([^/]+)\/rename$/);
+  if (rm && method === 'POST') return rename(ctx, rm[1]);
   let m = path.match(/^\/api\/projects\/([^/]+)\/config$/);
   if (m) {
     const project = m[1];
@@ -92,6 +95,71 @@ function assertNew(project) {
   if (project === DASHBOARD_PROJECT) throw new Error(`"${DASHBOARD_PROJECT}" is reserved for the dashboard`);
   if (readMeta(project)) throw new Error(`${project} already exists; edit it instead`);
   if (existsSync(newProjectFile(project))) throw new Error(`${newProjectFile(project)} already exists`);
+}
+
+// Renaming changes every hostname (they're built from the project name) and the tunnel
+// name, so it is done the safe way: the project must be stopped; `burrow destroy <old>`
+// deletes the old tunnel and DNS records first (if that fails nothing else changes); then
+// tunnel.yml gets the new `project:` (a file in the import directory is also renamed),
+// the new name is remembered, and `burrow up <new>` creates a fresh tunnel and records.
+async function rename(ctx, from) {
+  try { assertLabel(from, 'project'); } catch { return ctx.json(400, { error: 'bad project' }) ?? true; }
+  const file = editableFile(from);
+  if (!file) return ctx.json(404, { error: `${from} has no remembered tunnel.yml to rename` }) ?? true;
+  const body = await ctx.readJson();
+  if (!body) return ctx.json(400, { error: 'invalid JSON' }) ?? true;
+  const to = String(body.to ?? '').trim();
+  const cfg = ctx.loadConfig();
+  let text;
+  let plan;
+  try {
+    assertLabel(to, 'new project name');
+    if (to === from) throw new Error('that is the current name');
+    assertNew(to);
+    const before = readFileSync(file, 'utf8');
+    text = renameText(before, to, file);
+    const target = file === newProjectFile(from) ? newProjectFile(to) : file;
+    if (target !== file && existsSync(target)) throw new Error(`${target} already exists`);
+    const hostsOf = (t) => (cfg.domain ? hostnames(parseProject(t), cfg.domain).map((h) => h.hostname) : []);
+    const a = hostsOf(before);
+    const b = hostsOf(text);
+    plan = { from, to, file: target, hosts: a.map((h, i) => ({ from: h, to: b[i] })), running: !!runningPid(from) };
+  } catch (e) { return ctx.json(400, { error: e.message }) ?? true; }
+  if (body.dryRun === true) return ctx.json(200, { ok: true, ...plan }) ?? true;
+  if (body.confirm !== true) return ctx.json(400, { error: 'confirm the rename (confirm: true)' }) ?? true;
+  if (plan.running) return ctx.json(409, { error: `${from} is running; stop it first (Down), then rename` }) ?? true;
+  try {
+    const cf = new Cloudflare({ token: cfg.token, accountId: cfg.accountId, zoneId: cfg.zoneId });
+    if (await cf.findTunnel(tunnelName(to))) {
+      return ctx.json(409, { error: `Cloudflare already has a tunnel named ${tunnelName(to)}; pick another name or remove it first` }) ?? true;
+    }
+  } catch (e) { return ctx.json(502, { error: `Cloudflare check failed: ${e.message}` }) ?? true; }
+
+  const r = await ctx.withBusy(from, () => ctx.withBusy(to, async () => {
+    if (runningPid(from)) return { ok: false, error: `${from} was started meanwhile; stop it first` };
+    ctx.log(`rename ${from} -> ${to} (requested from ${ctx.clientIp})`);
+    const d = await ctx.runCli(['destroy', from]);
+    ctx.invalidate();
+    if (!d.ok) return { ok: false, output: d.output, error: `burrow destroy ${from} failed, so nothing was renamed` };
+    if (plan.file !== file) {
+      mkdirSync(join(plan.file, '..'), { recursive: true, mode: 0o700 });
+      writeFileSync(plan.file, text, { flag: 'wx' });
+      rmSync(file, { force: true });
+    } else writeFileSync(file, text);
+    saveMeta(to, { project: to, file: plan.file, hostnames: [] });
+    ctx.events.emit('event', { action: 'rename', project: to, ok: true, source: 'dashboard', detail: `from ${from}` });
+    const out = { ok: true, renamed: true, ...plan, running: false, output: d.output };
+    if (body.up === true) {
+      const run = await ctx.runCli(['up', to]);
+      out.ok = run.ok;
+      out.output += '\n' + run.output;
+    }
+    ctx.invalidate();
+    return out;
+  }));
+  if (r === null) ctx.json(409, { error: `${from} or ${to} is busy` });
+  else ctx.json(r.renamed ? (r.ok ? 200 : 500) : 500, r);
+  return true;
 }
 
 async function save(ctx, { project, file, text, up, action, create }) {
@@ -160,10 +228,31 @@ export const html = {
       </div>
       <footer>
         <button type="button" class="secondary" @click="closeForm">Cancel</button>
+        <button type="button" class="secondary outline" x-show="formEditing" :disabled="formBusy" @click="openRename">Rename…</button>
         <button type="button" class="secondary outline" :disabled="formBusy" @click="checkProject">Check</button>
         <button type="submit" :aria-busy="formBusy" :disabled="formBusy">Save</button>
       </footer>
     </form>
+  </article>
+</dialog>
+<dialog :open="renameOpen" class="rename-dialog">
+  <article>
+    <header><strong>Rename <span x-text="form.project"></span></strong></header>
+    <p class="error" x-show="formRunning">It's running. Stop it first (Down): renaming deletes and recreates its tunnel.</p>
+    <label>New name
+      <input type="text" x-model="renameTo" @input="onRenameInput" placeholder="acme-store" aria-label="New project name" autocomplete="off">
+    </label>
+    <p class="error" x-show="hasRenameError" x-text="renameError"></p>
+    <div x-show="hasRenamePlan" class="rename-plan">
+      <p><small>The tunnel and DNS records of <strong x-text="form.project"></strong> are deleted, the new name is written to
+        <code x-text="renameFile"></code>, and new ones are created on the next start. Old URLs stop working:</small></p>
+      <ul><template x-for="row in renameHosts" :key="row.from"><li><code x-text="row.from"></code> → <code x-text="row.to"></code></li></template></ul>
+    </div>
+    <label><input type="checkbox" x-model="renameUp"> Run <code>burrow up</code> after renaming</label>
+    <footer>
+      <button class="secondary" @click="closeRename">Cancel</button>
+      <button class="danger" :disabled="cannotRename" :aria-busy="renameBusy" @click="doRename">Rename</button>
+    </footer>
   </article>
 </dialog>`,
 };
@@ -176,6 +265,7 @@ export const css = `
 button.small{width:auto;padding:.25rem .7rem;font-size:.8rem}
 .form-preview pre{max-height:220px;overflow:auto;font-size:.78rem}
 .form-preview ul{margin-bottom:.4rem}
+.rename-dialog article{width:min(560px,100%)}.rename-plan ul{margin-bottom:.5rem}
 `;
 
 export const js = `
@@ -184,6 +274,46 @@ burrowPanel(function () {
   function noPreview() { return { hostnames: [], yaml: '' }; }
   return {
     formOpen: false, formEditing: false, form: blank(), formUp: true, formError: '', formBusy: false, preview: noPreview(),
+    formRunning: false, renameOpen: false, renameTo: '', renamePlan: null, renameError: '', renameBusy: false, renameUp: true, renameTimer: null,
+    get hasRenameError() { return this.renameError.length > 0; },
+    get hasRenamePlan() { return !!this.renamePlan; },
+    get renameHosts() { return this.renamePlan ? this.renamePlan.hosts : []; },
+    get renameFile() { return this.renamePlan ? this.renamePlan.file : ''; },
+    get cannotRename() { return !this.renamePlan || this.renameBusy || this.formRunning || this.renamePlan.to !== this.renameTo.trim(); },
+    renameUrl: function () { return '/api/projects/' + encodeURIComponent(this.form.project) + '/rename'; },
+    openRename: function () { this.renameTo = ''; this.renamePlan = null; this.renameError = ''; this.renameUp = true; this.renameOpen = true; },
+    closeRename: function () { this.renameOpen = false; },
+    onRenameInput: function () {
+      var self = this;
+      clearTimeout(this.renameTimer);
+      this.renamePlan = null;
+      this.renameTimer = setTimeout(function () { self.checkRename(); }, 300);
+    },
+    checkRename: async function () {
+      var to = this.renameTo.trim();
+      this.renameError = '';
+      if (!to) return;
+      try {
+        var r = await post(this.renameUrl(), { to: to, dryRun: true });
+        var j = await r.json().catch(function () { return {}; });
+        if (to !== this.renameTo.trim()) return;
+        if (r.ok) this.renamePlan = j; else this.renameError = j.error || ('HTTP ' + r.status);
+      } catch (e) { this.renameError = 'Network error'; }
+    },
+    doRename: async function () {
+      if (this.cannotRename) return;
+      this.renameBusy = true; this.renameError = '';
+      try {
+        var r = await post(this.renameUrl(), { to: this.renameTo.trim(), confirm: true, up: this.renameUp });
+        if (r.status === 401) { location.assign('/login'); return; }
+        var j = await r.json().catch(function () { return {}; });
+        if (j.renamed) {
+          this.renameOpen = false; this.formOpen = false;
+          this.showToast((j.ok ? '✓ ' : '✗ ') + 'renamed ' + j.from + ' → ' + j.to + (j.output ? '\\n' + j.output : ''), !!j.ok, 12000);
+          this.load();
+        } else this.renameError = j.error || ('HTTP ' + r.status);
+      } catch (e) { this.renameError = 'Network error'; } finally { this.renameBusy = false; }
+    },
 
     get formTitle() { return this.formEditing ? 'Edit ' + this.form.project : 'New project'; },
     get hasFormError() { return this.formError.length > 0; },
@@ -199,6 +329,7 @@ burrowPanel(function () {
     editProject: async function (p) {
       try {
         var j = await getJson('/api/projects/' + encodeURIComponent(p.project) + '/config');
+        this.formRunning = !!p.running;
         this.openForm(j.form, true, !!p.running);
       } catch (e) { this.showToast('✗ ' + e.message, false); }
     },

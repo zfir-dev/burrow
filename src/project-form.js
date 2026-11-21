@@ -107,3 +107,15 @@ export function renderEdit(text, form, source = 'tunnel.yml') {
   parseProject(out, source); // same errors as `burrow up`
   return out;
 }
+
+// Rename: only the `project:` key changes; comments, services and other keys stay.
+export function renameText(text, to, source = 'tunnel.yml') {
+  assertLabel(to, 'new project name');
+  const before = parseProject(text, source);
+  if (before.project === to) throw new Error(`${source} is already called ${to}`);
+  const doc = YAML.parseDocument(text);
+  doc.set('project', to);
+  const out = doc.toString({ lineWidth: 0 });
+  parseProject(out, source);
+  return out;
+}
