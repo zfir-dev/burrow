@@ -28,12 +28,27 @@ Cloudflare objects are named and tagged so burrow can find them again:
 ## Install
 
 Requires Node 18+ and [`cloudflared`](https://github.com/cloudflare/cloudflared/releases).
+burrow isn't published to the npm registry (`"private": true`); install it from git or from a checkout.
+
+From git (installs `burrow` globally, with its dependencies):
+
+```sh
+npm install -g git+ssh://git@github.com/<owner>/burrow.git        # or git+https://…
+npm install -g git+ssh://git@github.com/<owner>/burrow.git#main   # a branch or tag
+```
+
+From a checkout (handy while hacking on it, since edits apply immediately):
 
 ```sh
 git clone <this-repo-url> burrow && cd burrow
 npm install
-npm link        # puts `burrow` on PATH
+npm link          # or: npm install -g .
 ```
+
+Check it with `burrow --version`. Remove it with `npm uninstall -g burrow` (or `npm unlink -g burrow`).
+
+With nvm, global packages belong to the active Node version, so reinstall after switching
+versions. The systemd unit (if you use one) records the Node binary path when it is installed.
 
 ## Setup
 
