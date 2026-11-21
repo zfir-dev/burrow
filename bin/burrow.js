@@ -30,6 +30,12 @@ const wrap = (fn) => async (...args) => {
     process.exitCode = 1;
   }
 };
+program.command('update')
+  .description('update burrow from GitHub (git checkout: git pull --ff-only + npm install; global install: npm i -g)')
+  .option('--check', 'only report whether a newer commit or version exists')
+  .option('--dry-run', 'print what would run')
+  .option('--force', 'global install: reinstall even when up to date')
+  .action(wrap(async (o) => (await import('../src/update.js')).update(o)));
 program.command('url [project]')
   .description("print a project's public URLs")
   .option('-f, --file <path>', 'path to tunnel.yml')
