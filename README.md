@@ -218,7 +218,12 @@ _Not merged yet (`feature/ui-health`)._
 
 ### Request stats
 
-_Not merged yet (`feature/ui-stats`)._
+**Stats** on a row opens requests, bandwidth and status classes per hostname for the last
+hour, 6 hours, 24 hours or 7 days, plus an inline-SVG chart of requests with 4xx and 5xx lines
+(15-minute buckets up to 6 h, hourly beyond). Pick a hostname to chart only that one. It uses the
+same Cloudflare GraphQL Analytics query as `burrow stats`, so the token needs
+**Zone > Analytics > Read**; without it the panel shows the permission error. Results are cached
+for 60 s per project and window, and Cloudflare samples these numbers.
 
 ### Logs
 
