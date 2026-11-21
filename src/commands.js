@@ -11,6 +11,7 @@ import {
 import {
   runningPid, startConnector, stopConnector, logFile, pidFile, saveMeta, readMeta, removeMeta, localProjects,
 } from './process.js';
+import { isShare, removeShare } from './share.js';
 
 const log = (...a) => console.log(...a);
 const step = (dry, msg) => log(`${dry ? '[dry-run] ' : ''}${msg}`);
@@ -155,9 +156,18 @@ export async function down(projectArg, opts) {
   if (!projects.length) { log('No burrow connectors found.'); return; }
   for (const project of projects) {
     const pid = runningPid(project);
-    if (dry) { step(dry, pid ? `would stop ${project} cloudflared (pid ${pid})` : `${project}: not running`); continue; }
+    const temp = isShare(project);
+    if (dry) {
+      step(dry, pid ? `would stop ${project} cloudflared (pid ${pid})` : `${project}: not running`);
+      if (temp) step(dry, `would delete share ${project} (tunnel and DNS)`);
+      continue;
+    }
     const stopped = await stopConnector(project);
     log(stopped ? `${project}: stopped cloudflared (pid ${stopped})` : `${project}: not running`);
+    if (temp) {
+      await removeShare(project);
+      log(`${project}: share removed (tunnel and DNS deleted)`);
+    }
   }
   if (!dry) log('Tunnels and DNS records are kept. Use "burrow destroy" to delete them.');
 }
