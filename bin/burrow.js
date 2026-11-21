@@ -86,9 +86,12 @@ program.command('dashboard [action]')
     if (action === 'status') return dash.status(o);
     throw new Error(`Unknown dashboard action "${action}" (use up, down or status)`);
   }));
-program.command('ls').description('list burrow tunnels, hostnames and running state').action(wrap(() => cmd.ls()));
+program.command('ls').description('list burrow tunnels, hostnames and running state')
+  .option('--json', 'machine-readable output')
+  .action(wrap((o) => cmd.ls(o)));
 program.command('status [project]').description('show one project')
   .option('-f, --file <path>', 'path to tunnel.yml')
+  .option('--json', 'machine-readable output')
   .action(wrap((p, o) => cmd.status(p, o)));
 program.command('service <action>')
   .description('systemd user unit that brings projects up at boot: install | uninstall | status')

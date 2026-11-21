@@ -111,8 +111,8 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | `burrow service install\|uninstall\|status` | systemd user unit that runs `burrow up` at boot for projects with `autostart: true` or listed in `BURROW_AUTOSTART` ([details](docs/service.md)) |
 | `burrow dashboard down`          | Stop the dashboard server and its tunnel connector (tunnel and DNS are kept) |
 | `burrow dashboard status`        | Server, connector, URL, whether a password is set |
-| `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state |
-| `burrow status [project]`        | Local process, tunnel health, DNS records |
+| `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state (`--json` for a machine-readable array) |
+| `burrow status [project]`        | Local process, tunnel health, DNS records (`--json` for an object with `running`, `pid`, `tunnel`, `records`) |
 | `burrow logs [project]`          | Show the cloudflared log (`-n 200`, `--follow`) |
 
 `destroy` with no project and no `--all` refuses to run.
