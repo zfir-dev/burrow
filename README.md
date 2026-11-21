@@ -171,7 +171,7 @@ It shows every burrow project with:
 - local cloudflared state (running/stopped, pid, uptime)
 - connector status from the Cloudflare API (healthy/degraded/down, connections, colos)
 - a live log viewer that streams `~/.local/state/burrow/<project>.log` over SSE
-- **Up** / **Down** / **Destroy** buttons. **Destroy** opens a dialog and stays disabled until you type the project name.
+- **Up** / **Down** buttons and **Destroy…** (in the row's **⋯** menu). **Destroy** opens a dialog and stays disabled until you type the project name.
   The dashboard's own project can't be stopped from the UI.
 
 | Sign in | Live logs |
