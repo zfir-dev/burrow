@@ -18,13 +18,27 @@ test('every slot renders where it belongs, and the base page has none left over'
   const page = renderApp([{ id: 'demo', html }]);
   for (const s of SLOTS) assert.ok(page.includes(`<!--${s}-->`), s);
   assert.ok(page.indexOf('<!--headLead-->') < page.indexOf('<th>Project</th>'));
-  assert.ok(page.indexOf('<!--rowActions-->') < page.indexOf('openLogs(p)'));
+  // Panel row actions are items of the row's "⋯" menu, listed before Destroy.
+  const menu = page.indexOf('class="row-menu"');
+  assert.ok(page.indexOf('openLogs(p)') < menu);
+  assert.ok(menu < page.indexOf('<!--rowActions-->') && page.indexOf('<!--rowActions-->') < page.indexOf('askDestroy(p)'));
   assert.ok(page.indexOf('<!--sections-->') < page.indexOf('</main>'));
   assert.match(page, /src="\/panels\.js"/);
   assert.match(page, /href="\/panels\.css"/);
   assert.ok(page.indexOf('/app.js') < page.indexOf('/panels.js'), 'panels.js loads after app.js');
   assert.ok(page.indexOf('/panels.js') < page.indexOf('/vendor/alpine.min.js'), 'and before Alpine starts');
   assert.doesNotMatch(APP_HTML, /\$\{|<!--/);
+});
+
+test('the project table fits narrow screens: compact cells, a row menu, cards on small screens', async () => {
+  const { APP_CSS } = await import('../src/dashboard/ui.js');
+  assert.doesNotMatch(APP_HTML, /overflow-auto/, 'no sideways scrolling that would clip the row menu');
+  assert.match(APP_HTML, /<details class="row-menu">[\s\S]*askDestroy\(p\)[\s\S]*<\/details>/);
+  for (const col of ['col-project', 'col-hosts', 'col-local', 'col-conn', 'col-uptime', 'col-actions']) assert.ok(APP_HTML.includes(col), col);
+  assert.match(APP_HTML, /:title="h"/, 'cut-off hostnames show in full on hover');
+  assert.match(APP_CSS, /@media \(max-width:1239px\)\{table\.projects \.col-uptime\{display:none\}\}/);
+  assert.match(APP_CSS, /@media \(max-width:1179px\)\{[\s\S]*table\.projects thead\{display:none\}/);
+  assert.match(APP_JS, /details\.row-menu\[open\]/, 'menus close on outside click and Escape');
 });
 
 test('panels sort by order then id; app.js merges mixins and hooks', () => {

@@ -211,6 +211,12 @@ POSTs need the same `X-Burrow: 1` header, so every feature gets the same login, 
 protection. Commands the dashboard runs get `BURROW_SOURCE=dashboard` in their environment.
 See [`src/dashboard/panels/README.md`](src/dashboard/panels/README.md) for the interface.
 
+The table stays within the window with every panel merged: each row shows **Logs**, **Up** and
+**Down**, and the rest (**Destroy…** and panel actions such as Edit, Stats and Restart) are in
+the row's **⋯** menu. Long hostnames are shortened with an ellipsis (hover for the full name), the
+Uptime column is hidden below 1240 px, and below 1180 px each project becomes a card, so it also
+works on a phone.
+
 ### Add and edit projects
 
 _Not merged yet (`feature/ui-project-form`)._

@@ -42,30 +42,35 @@ export const renderApp = (panels = []) => {
   <p x-show="loading" aria-busy="true">Loading…</p>
   <article x-show="empty">No burrow tunnels yet. Run <code>burrow up</code> in a project with a <code>tunnel.yml</code>.</article>
 
-  <div class="overflow-auto" x-show="hasProjects">
-  <table class="striped">
-    <thead><tr>${s('headLead')}<th>Project</th><th>Hostnames</th><th>Local</th><th>Connector</th><th>Uptime</th>${s('headCols')}<th></th></tr></thead>
+  <div class="projects-wrap" x-show="hasProjects">
+  <table class="striped projects">
+    <thead><tr>${s('headLead')}<th>Project</th><th>Hostnames</th><th>Local</th><th>Connector</th><th class="col-uptime">Uptime</th>${s('headCols')}<th><span class="sr-only">Actions</span></th></tr></thead>
     <tbody>
     <template x-for="p in projects" :key="p.project">
       <tr>
         ${s('rowLead')}
-        <td><strong x-text="p.project"></strong> <span class="badge" x-show="p.builtIn">dashboard</span>${s('rowBadges')}</td>
-        <td>
+        <td class="col-project"><strong x-text="p.project"></strong> <span class="badge" x-show="p.builtIn">dashboard</span>${s('rowBadges')}</td>
+        <td class="col-hosts">
           <template x-for="h in p.hostnames" :key="h">
-            <div class="host"><a :href="hostUrl(h)" target="_blank" rel="noopener noreferrer" x-text="h"></a>${s('hostExtras')}</div>
+            <div class="host"><a :href="hostUrl(h)" :title="h" target="_blank" rel="noopener noreferrer" x-text="h"></a>${s('hostExtras')}</div>
           </template>
           <small x-show="noHosts(p)">none</small>
         </td>
-        <td><span class="badge" :class="localClass(p)" x-text="localText(p)"></span><br><small x-text="pidText(p)"></small>${s('localExtras')}</td>
-        <td><span class="badge" :class="connClass(p)" x-text="connStatus(p)"></span><br><small x-text="connInfo(p)"></small></td>
-        <td x-text="uptime(p)"></td>
+        <td class="col-local"><span class="badge" :class="localClass(p)" x-text="localText(p)"></span><br><small x-text="pidText(p)"></small>${s('localExtras')}</td>
+        <td class="col-conn"><span class="badge" :class="connClass(p)" x-text="connStatus(p)"></span><br><small x-text="connInfo(p)"></small></td>
+        <td class="col-uptime" x-text="uptime(p)"></td>
         ${s('rowCols')}
-        <td><div class="actions">
-          ${s('rowActions')}
+        <td class="col-actions"><div class="actions">
           <button class="secondary outline" @click="openLogs(p)">Logs</button>
           <button :disabled="upDisabled(p)" :title="upTitle(p)" :aria-busy="isBusy(p)" @click="act(p, 'up')">Up</button>
           <button class="secondary" :disabled="downDisabled(p)" :title="downTitle(p)" @click="act(p, 'down')">Down</button>
-          <button class="danger outline" :disabled="p.builtIn" @click="askDestroy(p)">Destroy</button>
+          <details class="row-menu">
+            <summary class="secondary outline" role="button" title="More actions" aria-label="More actions" aria-haspopup="menu"><span aria-hidden="true">⋯</span></summary>
+            <div class="menu" role="menu">
+              ${s('rowActions')}
+              <button class="danger" :disabled="p.builtIn" @click="askDestroy(p)">Destroy…</button>
+            </div>
+          </details>
         </div></td>
       </tr>
     </template>
@@ -128,6 +133,48 @@ td small{color:var(--pico-muted-color)}
 .toast pre{margin:0;max-height:40vh;overflow:auto;font-size:.78rem;white-space:pre-wrap;background:transparent;padding:0}
 .toast.ok{border-left:4px solid #1f9d55}.toast.bad{border-left:4px solid #dc2626}
 .host{display:flex;align-items:center;gap:.35rem}
+/* Project table: fits a laptop screen with every panel merged. Rarely used row actions
+   (panel actions, Destroy) live in a "⋯" menu; long hostnames are cut with an ellipsis
+   (full name on hover); Uptime is dropped below 1240px and rows become cards below 1180px. */
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.projects-wrap{margin-bottom:var(--pico-spacing)}
+table.projects{width:100%;margin-bottom:0}
+table.projects td.col-local{white-space:normal;min-width:7rem;max-width:15rem}
+table.projects td.col-local small,table.projects td.col-conn small{line-height:1.3;display:inline-block}
+table.projects .host a{max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
+table.projects td.col-actions{width:1%}
+.row-menu{position:relative;display:inline-block;margin:0}
+.row-menu>summary{list-style:none;margin:0;padding:.25rem .55rem;font-size:.8rem;line-height:1.2;width:auto;height:auto}
+.row-menu>summary::-webkit-details-marker{display:none}
+.row-menu>summary::after{display:none}
+.row-menu .menu{position:absolute;right:0;top:calc(100% + .25rem);z-index:20;min-width:9.5rem;padding:.3rem;display:flex;flex-direction:column;gap:.1rem;
+  background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:var(--pico-border-radius);box-shadow:var(--pico-card-box-shadow)}
+.row-menu .menu button{display:block;width:100%;margin:0;text-align:left;padding:.35rem .6rem;font-size:.85rem;border:0;box-shadow:none;
+  background:transparent;color:var(--pico-color)}
+.row-menu .menu button:hover:not([disabled]),.row-menu .menu button:focus-visible{background:var(--pico-secondary-focus)}
+.row-menu .menu button.danger{color:#dc2626}
+.row-menu .menu button[disabled]{opacity:.45}
+header nav{flex-wrap:wrap;gap:.25rem 1rem}
+header nav ul:last-child{flex-wrap:wrap;justify-content:flex-end}
+header nav ul:last-child li{padding-inline:.2rem}
+header nav button,header nav a[role=button]{padding:.35rem .75rem;font-size:.875rem;margin:0}
+@media (max-width:1239px){table.projects .col-uptime{display:none}}
+@media (max-width:1179px){
+  table.projects thead{display:none}
+  table.projects,table.projects tbody{display:block}
+  table.projects tbody tr{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .9rem;padding:.7rem .5rem;border-bottom:1px solid var(--pico-muted-border-color)}
+  table.projects tbody td{display:block;padding:0;border:0;background:transparent !important;white-space:normal}
+  table.projects td.col-project{flex:1 1 70%}
+  table.projects td.col-local br,table.projects td.col-conn br{display:none}
+  table.projects td.col-local small,table.projects td.col-conn small{margin-left:.35rem}
+  table.projects td.col-hosts{order:5;flex-basis:100%}
+  table.projects td.col-actions{order:9;flex-basis:100%;width:auto}
+  table.projects td.col-local,table.projects td.col-conn{max-width:none;min-width:0}
+  table.projects .col-uptime{display:block}
+  table.projects td.col-uptime:not(:empty)::before{content:"up ";color:var(--pico-muted-color)}
+  table.projects .host a{max-width:none}
+  .actions{justify-content:flex-start;flex-wrap:wrap}
+}
 `;
 
 export const LOGIN_JS = `
@@ -204,6 +251,17 @@ document.addEventListener('alpine:init', function () {
 
       init: function () {
         var self = this;
+        // Row "⋯" menus: one open at a time; close on an outside click, after picking an item, or on Escape.
+        document.addEventListener('click', function (e) {
+          var item = e.target.closest ? e.target.closest('.row-menu .menu button') : null;
+          document.querySelectorAll('details.row-menu[open]').forEach(function (d) {
+            if (item || !d.contains(e.target)) d.open = false;
+          });
+        });
+        document.addEventListener('keydown', function (e) {
+          if (e.key !== 'Escape') return;
+          document.querySelectorAll('details.row-menu[open]').forEach(function (d) { d.open = false; });
+        });
         this.load();
         this.timer = setInterval(function () { self.load(); }, 5000);
         hooks.init.forEach(function (f) { f.call(self); });
