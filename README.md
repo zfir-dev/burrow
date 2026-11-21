@@ -86,6 +86,7 @@ services:
 - `originRequest` (on a service or a path) is passed through to cloudflared, e.g.
   `originRequest: { noTLSVerify: true }`.
 - burrow adds a final `http_status:404` rule.
+- `autostart: true` makes `burrow service` bring the project up at boot ([details](docs/service.md)).
 
 See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 
@@ -101,6 +102,7 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | `burrow destroy --all`           | Delete every `burrow-*` tunnel and every `burrow:*` DNS record, and stop all local connectors. Asks `[y/N]` first; `--yes` skips the prompt (needed in non-interactive shells) |
 | `burrow dashboard`               | Run the web dashboard in the foreground on `127.0.0.1:7070` |
 | `burrow dashboard up`            | Start the dashboard in the background and expose it at `https://burrow.<domain>` through its own tunnel (`--no-tunnel` for local only) |
+| `burrow service install\|uninstall\|status` | systemd user unit that runs `burrow up` at boot for projects with `autostart: true` or listed in `BURROW_AUTOSTART` ([details](docs/service.md)) |
 | `burrow dashboard down`          | Stop the dashboard server and its tunnel connector (tunnel and DNS are kept) |
 | `burrow dashboard status`        | Server, connector, URL, whether a password is set |
 | `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state |
