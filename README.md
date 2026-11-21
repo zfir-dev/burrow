@@ -283,7 +283,14 @@ The viewer keeps the newest 3000 lines in the browser.
 
 ### Quick actions
 
-_Not merged yet (`feature/ui-quick-actions`)._
+Next to every hostname (hover to highlight): **⧉** copies the URL, **↗** opens it in a new tab,
+and **▦** shows a QR code to open it on a phone. **Restart** on a row re-syncs `tunnel.yml` and
+restarts cloudflared, like `burrow restart <project>` (not for the dashboard's own project).
+
+The QR code is drawn in the browser by [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator)
+(MIT, pinned to 2.0.4), served from `node_modules` at `/vendor/qrcode.js` and loaded the first time
+you open a QR code, so it works offline and needs no CSP change (the image is a `data:` URL).
+Copying uses the Clipboard API on HTTPS or localhost and falls back to a selection copy.
 
 ### Event history
 
