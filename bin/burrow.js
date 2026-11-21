@@ -52,6 +52,12 @@ program.command('destroy [project]')
   .option('-y, --yes', 'skip the confirmation for --all')
   .option('--dry-run', 'print what would be deleted')
   .action(wrap((p, o) => cmd.destroy(p, o)));
+program.command('prune')
+  .description('delete orphaned burrow-* tunnels and burrow:* DNS records (asks first)')
+  .option('--dry-run', 'list orphans only')
+  .option('-y, --yes', 'skip the confirmation')
+  .option('--include-active', 'also prune tunnels that still have live connections')
+  .action(wrap(async (o) => (await import('../src/prune.js')).prune(o)));
 program.command('dashboard [action]')
   .description('web dashboard: no action = run in foreground; up | down | status to manage it in the background')
   .option('--port <port>', 'port (default BURROW_DASHBOARD_PORT or 7070)')
