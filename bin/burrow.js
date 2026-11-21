@@ -62,6 +62,13 @@ program.command('add [project]')
   .option('--force', 'overwrite an existing file')
   .option('-y, --yes', 'never prompt')
   .action(wrap(async (p, o) => (await import('../src/add.js')).add(p, o)));
+program.command('edit [project]')
+  .description('open tunnel.yml in $EDITOR, validate it on save, and offer to apply it if the project is running')
+  .option('-f, --file <path>', 'path to tunnel.yml')
+  .option('--no-apply', 'only save, never re-run up')
+  .option('-y, --yes', 'apply without asking when the project is running')
+  .option('--dry-run', 'apply as "up --dry-run"')
+  .action(wrap(async (p, o) => (await import('../src/edit.js')).edit(p, o)));
 program.command('up [project]')
   .description('create/reuse tunnel, set ingress and DNS, start cloudflared')
   .option('-f, --file <path>', 'path to tunnel.yml')
