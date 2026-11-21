@@ -233,7 +233,18 @@ _Not merged yet (`feature/ui-history`)._
 
 ### Alerts
 
-_Not merged yet (`feature/ui-alerts`)._
+**Alerts** in the top bar configures [`burrow watch`](docs/alerts.md) from the browser:
+
+- **Watcher**: install (or reinstall with a new interval and debounce) and uninstall the
+  `burrow-watch.service` systemd user unit, with its current state. Uninstalling asks first.
+- **Channels**: set or remove the webhook (Slack, Discord or JSON), the ntfy topic or URL, and
+  the ntfy token. They're written to the burrow config file (kept at mode 600, other lines
+  untouched) and never sent back to the browser or logged; the page only shows what kind of
+  channel is set and its host. Values from the environment win over the file and are marked `(env)`.
+- **Send test alert** delivers a `burrow-test is degraded` message to every channel and shows
+  any delivery errors.
+- **Last seen by the watcher** lists the state `burrow watch` keeps per project (status, since
+  when, and a change it's still debouncing).
 
 ### Cleanup
 
