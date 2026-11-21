@@ -247,7 +247,16 @@ Old URLs stop working. The old project's log file is kept under its old name.
 
 ### Local port health
 
-_Not merged yet (`feature/ui-health`)._
+Each hostname gets a dot for the local port behind it, checked every 10 s with a TCP connect
+(the same check `burrow watch` uses; results are cached for 3 s):
+
+- **green**: the port answers and the tunnel is up
+- **red**: the app is down (nothing listening on its port; a service with paths is red if any of its ports is closed)
+- **orange**: the app answers but the tunnel is down (cloudflared stopped, or no Cloudflare connections)
+- **grey**: nothing to check (`http_status:…`) or no remembered `tunnel.yml`
+
+Under the Local state a line says which it is, e.g. `app down: api :3001` or
+`tunnel down: cloudflared stopped`. Hover a dot for the host and port.
 
 ### Request stats
 
