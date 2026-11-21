@@ -13,6 +13,12 @@ import * as dash from '../src/dashboard/manage.js';
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const program = new Command();
 program.name('burrow').description('Manage Cloudflare Tunnels for local projects').version(pkg.version);
+// Event history: state-changing commands are recorded with their source (src/history.js).
+let startedAt = Date.now();
+program.hook('preAction', () => { startedAt = Date.now(); });
+program.hook('postAction', async (_, command) => {
+  try { (await import('../src/history.js')).recordCommand(command, startedAt); } catch {}
+});
 program.command('completion <shell>')
   .description('print a shell completion script: bash | zsh')
   .action(async (shell) => {
