@@ -304,6 +304,15 @@ where it came from:
   or a dashboard-only action such as saving a `tunnel.yml` from the form
 - `boot`: `burrow autostart` from the systemd unit
 
+Dashboard **sign-in** (ok or wrong password, with the client IP) and **sign-out** are recorded
+too, as `dashboard` events; the password never is. Attempts refused by the rate limit aren't.
+
+A run that is cut short still leaves an entry, marked failed unless it exited with code 0:
+`stopped by SIGINT` (Ctrl+C), `stopped by SIGTERM` / `SIGHUP`, or `exited before finishing`
+when a command calls `process.exit()`. The exit code stays what it was (130 for Ctrl+C,
+143 for SIGTERM), and a command with its own Ctrl+C cleanup (such as `share`) still runs it.
+Only `kill -9` (SIGKILL) can't be caught and leaves no entry.
+
 Filter by project or source. Read-only commands (`ls`, `status`, `logs`, `stats`, …) and
 `--dry-run` aren't recorded. Events are JSON Lines in `~/.local/state/burrow/history/events.jsonl`
 (mode 600, no secrets); past 1 MB the file is cut to the newest 2000 events. Recording is best
