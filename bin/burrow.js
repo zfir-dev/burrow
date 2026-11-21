@@ -59,5 +59,10 @@ program.command('logs [project]').description('show cloudflared logs')
   .option('-n, --lines <n>', 'number of lines', '100')
   .option('--follow', 'follow the log')
   .action(wrap((p, o) => cmd.logs(p, o)));
+program.command('doctor [project]')
+  .description('check config, token, zone, cloudflared and local service ports')
+  .option('-f, --file <path>', 'path to tunnel.yml')
+  .option('--offline', 'skip the Cloudflare API checks')
+  .action(wrap(async (p, o) => (await import('../src/doctor.js')).doctor(p, o)));
 
 await program.parseAsync();
