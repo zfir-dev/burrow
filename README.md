@@ -219,7 +219,17 @@ works on a phone.
 
 ### Add and edit projects
 
-_Not merged yet (`feature/ui-project-form`)._
+**New project** (top bar) and **Edit** (per row) open a form for the app port or URL, extra
+paths on the app, sub-services and `autostart`. **Check** shows the hostnames and the
+`tunnel.yml` it will write; **Save** validates it with the same rules as `burrow up` and can run
+`burrow up` right after (on by default for new and running projects).
+
+- New files go to `~/.config/burrow/projects/<project>.tunnel.yml` (where `burrow import` puts
+  them) and are remembered, so **Up** works straight away. Existing names are refused.
+- Edits go to the file `burrow up` remembered. They're made in place, so comments and keys the
+  form doesn't show (`hooks`, `domain`, `private`, `originRequest`, …) are kept. Renaming a
+  project isn't supported here; the dashboard's own project and shares can't be edited.
+- The browser never sends a file path.
 
 ### Local port health
 
