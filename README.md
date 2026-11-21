@@ -103,8 +103,8 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | `burrow dashboard up`            | Start the dashboard in the background and expose it at `https://burrow.<domain>` through its own tunnel (`--no-tunnel` for local only) |
 | `burrow dashboard down`          | Stop the dashboard server and its tunnel connector (tunnel and DNS are kept) |
 | `burrow dashboard status`        | Server, connector, URL, whether a password is set |
-| `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state |
-| `burrow status [project]`        | Local process, tunnel health, DNS records |
+| `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state (`--json` for a machine-readable array) |
+| `burrow status [project]`        | Local process, tunnel health, DNS records (`--json` for an object with `running`, `pid`, `tunnel`, `records`) |
 | `burrow logs [project]`          | Show the cloudflared log (`-n 200`, `--follow`) |
 
 `destroy` with no project and no `--all` refuses to run.
