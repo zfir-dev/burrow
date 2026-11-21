@@ -54,6 +54,16 @@ program.command('ls').description('list burrow tunnels, hostnames and running st
 program.command('status [project]').description('show one project')
   .option('-f, --file <path>', 'path to tunnel.yml')
   .action(wrap((p, o) => cmd.status(p, o)));
+program.command('service <action>')
+  .description('systemd user unit that brings projects up at boot: install | uninstall | status')
+  .option('--projects <list>', 'install: comma-separated projects (default: autostart projects, re-read at boot)')
+  .option('--now', 'install: also start it now')
+  .option('--dry-run', 'print what would happen')
+  .action(wrap(async (a, o) => (await import('../src/service.js')).service(a, o)));
+program.command('autostart [projects...]')
+  .description('bring up autostart projects (what the systemd unit runs)')
+  .option('--dry-run', 'print the list only')
+  .action(wrap(async (p, o) => (await import('../src/service.js')).autostart(p, o)));
 program.command('logs [project]').description('show cloudflared logs')
   .option('-f, --file <path>', 'path to tunnel.yml')
   .option('-n, --lines <n>', 'number of lines', '100')
