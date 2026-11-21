@@ -1,8 +1,11 @@
 // Panel: cleanup. Lists orphaned burrow-* tunnels and burrow:* DNS records with the
 // same rules as `burrow prune`, and deletes the ones you pick after a typed confirmation.
 // The orphan list is recomputed before deleting, so only things that are still orphans go.
+// DNS records are looked up in every zone burrow knows (BURROW_DOMAIN's, zones of
+// per-project `domain:` settings, cached and remembered), like `burrow prune`.
 import { Cloudflare } from '../../cloudflare.js';
 import { findOrphans, localProjectNames } from '../../prune.js';
+import { inZone, knownZones } from '../../zones.js';
 
 export const order = 80;
 export const CONFIRM_WORD = 'delete';
@@ -10,17 +13,25 @@ export const CONFIRM_WORD = 'delete';
 async function scan(cfg, includeActive) {
   if (!(cfg.token && cfg.accountId && cfg.domain)) throw Object.assign(new Error('Cloudflare not configured'), { status: 400 });
   const cf = new Cloudflare({ token: cfg.token, accountId: cfg.accountId, zoneId: cfg.zoneId });
-  await cf.resolveZoneId(cfg.domain);
   const tunnels = (await cf.listTunnels()).filter((t) => t.name.startsWith('burrow-'));
-  const records = await cf.recordsByCommentPrefix('burrow:');
-  return { cf, ...findOrphans({ tunnels, records, local: localProjectNames(), includeActive }) };
+  // One unreadable zone (e.g. a stale cache entry for a domain removed from the account)
+  // doesn't block the rest; it's reported so the page can say so.
+  const zones = await knownZones(cf, cfg);
+  const records = [];
+  const zoneErrors = [];
+  for (const z of zones) {
+    try {
+      for (const r of await inZone(cf, z.id).recordsByCommentPrefix('burrow:')) records.push({ ...r, zoneId: z.id, zoneName: z.domain });
+    } catch (e) { zoneErrors.push({ zone: z.domain, error: e.message }); }
+  }
+  return { cf, zones, zoneErrors, ...findOrphans({ tunnels, records, local: localProjectNames(), includeActive }) };
 }
 
 const tunnelView = (t) => ({
   id: t.id, name: t.name, status: t.status || 'unknown', createdAt: t.created_at || null,
   connections: (t.connections || []).length,
 });
-const recordView = (r) => ({ id: r.id, type: r.type, name: r.name, content: r.content, comment: r.comment });
+const recordView = (r) => ({ id: r.id, type: r.type, name: r.name, content: r.content, comment: r.comment, zone: r.zoneName });
 
 export async function route(ctx) {
   if (ctx.path !== '/api/cleanup') return false;
@@ -28,7 +39,10 @@ export async function route(ctx) {
   if (ctx.method === 'GET') {
     try {
       const s = await scan(cfg, ctx.url.searchParams.get('includeActive') === '1');
-      ctx.json(200, { tunnels: s.orphanTunnels.map(tunnelView), records: s.orphanRecords.map(recordView), skipped: s.skipped.map(tunnelView) });
+      ctx.json(200, {
+        tunnels: s.orphanTunnels.map(tunnelView), records: s.orphanRecords.map(recordView), skipped: s.skipped.map(tunnelView),
+        zones: s.zones.map((z) => z.domain), zoneErrors: s.zoneErrors,
+      });
     } catch (e) { ctx.json(e.status || 502, { error: e.message }); }
     return true;
   }
@@ -50,7 +64,7 @@ export async function route(ctx) {
     const lines = [];
     let failed = 0;
     for (const rec of records) {
-      try { await s.cf.deleteRecord(rec.id); lines.push(`Deleted DNS ${rec.name}`); } catch (e) { failed++; lines.push(`Failed DNS ${rec.name}: ${e.message}`); }
+      try { await inZone(s.cf, rec.zoneId).deleteRecord(rec.id); lines.push(`Deleted DNS ${rec.name}`); } catch (e) { failed++; lines.push(`Failed DNS ${rec.name}: ${e.message}`); }
     }
     for (const t of tunnels) {
       try {
@@ -62,6 +76,7 @@ export async function route(ctx) {
     const notOrphans = [...wantTunnels].filter((id) => !s.orphanTunnels.some((t) => t.id === id)).length +
       [...wantRecords].filter((id) => !s.orphanRecords.some((x) => x.id === id)).length;
     if (notOrphans) lines.push(`Skipped ${notOrphans} item(s) that are no longer orphans`);
+    for (const z of s.zoneErrors) lines.push(`Couldn't read DNS in ${z.zone}: ${z.error}`);
     ctx.log(`cleanup: deleted ${tunnels.length} tunnel(s), ${records.length} record(s) (requested from ${ctx.clientIp})`);
     ctx.events.emit('event', { action: 'cleanup', ok: !failed, detail: `${tunnels.length} tunnel(s), ${records.length} DNS record(s)` });
     ctx.invalidate();
@@ -84,6 +99,10 @@ export const html = {
     <button class="secondary outline" @click="closeCleanup">Close</button>
   </header>
   <p class="error" x-show="hasCleanupError" x-text="cleanupError"></p>
+  <p class="zones" x-show="hasZones"><small class="muted" x-text="zonesText"></small></p>
+  <template x-for="z in cleanup.zoneErrors" :key="z.zone">
+    <p class="zone-error"><small><span class="badge warn">not scanned</span> <code x-text="z.zone"></code> <span x-text="z.error"></span></small></p>
+  </template>
   <p x-show="cleanupClean"><span class="badge ok">clean</span> No orphaned burrow tunnels or DNS records.</p>
   <div x-show="hasOrphans">
     <h6>Tunnels</h6>
@@ -120,18 +139,21 @@ export const html = {
 };
 
 export const css = `
+.cleanup .zones,.cleanup .zone-error{margin:.25rem 0}
 .cleanup h6{margin:.75rem 0 .35rem}.cleanup label.orphan{display:block;margin:.2rem 0}
 .cleanup .row-buttons{display:flex;gap:.5rem;margin:.75rem 0}.cleanup .row-buttons button{width:auto;margin:0}
 `;
 
 export const js = `
 burrowPanel(function () {
-  function none() { return { tunnels: [], records: [], skipped: [] }; }
+  function none() { return { tunnels: [], records: [], skipped: [], zones: [], zoneErrors: [] }; }
   return {
     cleanupOpen: false, cleanup: none(), cleanupLoaded: false, cleanupLoading: false, cleanupError: '', cleanupActive: false,
     pickTunnels: [], pickRecords: [], cleanupConfirmOpen: false, cleanupConfirmText: '', cleanupBusy: false,
 
     get hasCleanupError() { return this.cleanupError.length > 0; },
+    get hasZones() { return (this.cleanup.zones || []).length > 0; },
+    get zonesText() { var z = this.cleanup.zones || []; return 'DNS checked in ' + z.length + (z.length === 1 ? ' zone: ' : ' zones: ') + z.join(', '); },
     get hasOrphans() { return this.cleanup.tunnels.length + this.cleanup.records.length > 0; },
     get cleanupClean() { return this.cleanupLoaded && !this.cleanupError && !this.hasOrphans; },
     get noOrphanTunnels() { return this.cleanup.tunnels.length === 0; },
@@ -143,14 +165,14 @@ burrowPanel(function () {
     get cleanupLabel() { return 'Delete ' + this.pickSummary; },
     get cannotCleanup() { return this.cleanupConfirmText !== 'delete' || this.cleanupBusy; },
     tunnelInfo: function (t) { return t.status + (t.connections ? ' · ' + t.connections + ' live conn' : '') + (t.createdAt ? ' · created ' + t.createdAt.slice(0, 10) : ''); },
-    recordInfo: function (r) { return r.type + ' → ' + r.content + ' (' + r.comment + ')'; },
+    recordInfo: function (r) { return r.type + ' → ' + r.content + ' (' + r.comment + (r.zone ? ', zone ' + r.zone : '') + ')'; },
 
     openCleanup: function () { this.cleanupOpen = true; this.scanCleanup(); },
     closeCleanup: function () { this.cleanupOpen = false; },
     scanCleanup: async function () {
       this.cleanupLoading = true; this.cleanupError = '';
       try {
-        this.cleanup = await getJson('/api/cleanup' + (this.cleanupActive ? '?includeActive=1' : ''));
+        this.cleanup = Object.assign(none(), await getJson('/api/cleanup' + (this.cleanupActive ? '?includeActive=1' : '')));
         this.pickTunnels = this.cleanup.tunnels.map(function (t) { return t.id; });
         this.pickRecords = this.cleanup.records.map(function (r) { return r.id; });
       } catch (e) { this.cleanup = none(); this.cleanupError = e.message; } finally { this.cleanupLoading = false; this.cleanupLoaded = true; }
