@@ -283,8 +283,8 @@ The viewer keeps the newest 3000 lines in the browser.
 
 ### Quick actions
 
-Next to every hostname (hover to highlight): **⧉** copies the URL, **↗** opens it in a new tab,
-and **▦** shows a QR code to open it on a phone. **Restart** on a row re-syncs `tunnel.yml` and
+Next to every hostname (hover to highlight) are three small icons: **copy** copies the URL, **open** (arrow out of a box) opens it in a new tab,
+and **QR** shows a QR code to open it on a phone. The icons are inline SVG, so they look the same on every system and need no icon font. **Restart** on a row re-syncs `tunnel.yml` and
 restarts cloudflared, like `burrow restart <project>` (not for the dashboard's own project).
 
 The QR code is drawn in the browser by [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator)
