@@ -25,7 +25,8 @@ function setup(api) {
   copyFileSync(EXAMPLE, file);
   const editor = fakeEditor(sb.dir);
   const logFile = join(sb.dir, 'editor.log');
-  const env = (extra = {}) => ({ VISUAL: '', EDITOR: editor, FAKE_EDIT_LOG: logFile, FAKE_EDIT_SOURCE: '', ...extra });
+  // TMPDIR inside the sandbox, so kept edit copies are removed with it.
+  const env = (extra = {}) => ({ VISUAL: '', EDITOR: editor, FAKE_EDIT_LOG: logFile, FAKE_EDIT_SOURCE: '', TMPDIR: sb.dir, ...extra });
   const content = (name, text) => { const p = join(sb.dir, name); writeFileSync(p, text); return p; };
   return { sb, project, file, editor, logFile, env, content };
 }
