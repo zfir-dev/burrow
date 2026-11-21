@@ -95,6 +95,7 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | -------------------------------- | ------------ |
 | `burrow init`                    | Write the config template, or verify the token and access |
 | `burrow up [project]`            | Create or reuse tunnel `burrow-<project>`, PUT its ingress config, upsert the CNAMEs (and remove stale ones tagged for this project), then (re)start `cloudflared` in the background |
+| `burrow share <port>`            | Share a local port on a temporary `<random>.<domain>` hostname; Ctrl+C, `burrow down` or `burrow destroy` removes it ([details](docs/share.md)) |
 | `burrow down [project]`          | Stop that project's `cloudflared` only. The tunnel and DNS records are kept, so the next `up` is quick |
 | `burrow down`                    | Stop **every** running burrow connector (each pid in `~/.local/state/burrow/`) |
 | `burrow destroy [project]`       | Stop `cloudflared`, delete DNS records tagged `burrow:<project>`, delete the tunnel's connections and the tunnel. `burrow down <project> --purge` does the same |
