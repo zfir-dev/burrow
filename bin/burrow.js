@@ -173,6 +173,8 @@ program.command('doctor [project]')
   .description('check config, token, zone, cloudflared and local service ports')
   .option('-f, --file <path>', 'path to tunnel.yml')
   .option('--offline', 'skip the Cloudflare API checks')
+  .option('--all', 'check every remembered project (ignore ./tunnel.yml)')
+  .option('--json', 'print the checks as one line of JSON')
   .action(wrap(async (p, o) => (await import('../src/doctor.js')).doctor(p, o)));
 program.command('stats [project]')
   .description('requests, bandwidth and status codes per hostname (Cloudflare GraphQL Analytics)')
