@@ -7,10 +7,12 @@ import { loadConfig } from '../config.js';
 import { assertLabel } from '../naming.js';
 import { logFile } from '../process.js';
 import { collect, invalidateCloudflare } from './data.js';
+import { readTail, combinedText, downloadName, streamAll } from './logs.js';
 import {
   passwordMatches, sessionKey, signSession, verifySession, RateLimiter, parseCookies, newSecret, MIN_PASSWORD_LENGTH,
 } from './auth.js';
 import { LOGIN_HTML, renderApp, APP_CSS, APP_JS, LOGIN_JS } from './ui.js';
+import { totpEnabled, verifyCode } from './totp.js';
 import { loadPanels, sortPanels, panelJs, panelCss, panelVendor, events } from './panels.js';
 
 // Vendored front-end libraries, served from node_modules (no CDN, works offline).
@@ -139,6 +141,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
   }
   const key = sessionKey(newSecret(), password);
   const sessions = new Map(); // id -> exp (server-side, so logout really ends a session)
+  const sessionInfo = new Map(); // id -> { createdAt, lastSeen, ip, agent } (for the Sessions panel)
   const limiter = new RateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
   const busy = new Set();
   const ready = (panels ? Promise.resolve(sortPanels(panels)) : loadPanels()).then(buildPanels);
@@ -152,6 +155,15 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
   const panelCtx = (req, res, url) => ({
     req, res, url, method: req.method, path: url.pathname, log, events, withBusy, runCli, loadConfig,
     invalidate: invalidateCloudflare,
+    // The /api/tunnels payload (with every panel's enrich), for panels that push updates.
+    async snapshot() {
+      const data = await collect(loadConfig());
+      for (const p of (await ready).list) {
+        if (!p.enrich) continue;
+        try { await p.enrich(data.projects, this); } catch (e) { log(`error: panel ${p.id}: ${e.message}`); }
+      }
+      return data;
+    },
     clientIp: clientIp(req),
     json: (status, obj, extra) => json(res, status, obj, extra),
     send: (status, body, type, extra) => send(res, status, body, type, extra),
@@ -159,13 +171,24 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       const text = await readBody(req, limit);
       try { return text ? JSON.parse(text) : {}; } catch { return null; }
     },
+    // Signed-in sessions (ids never leave the server; panels see opaque handles).
+    sessions: {
+      current: () => authed(req) || null,
+      list: () => [...sessions].filter(([, exp]) => exp > Date.now()).map(([id, exp]) => ({ id, exp, ...(sessionInfo.get(id) || {}) })),
+      revoke: (id) => { sessionInfo.delete(id); return sessions.delete(id); },
+      clearCookie: () => cookie('', 0),
+    },
   });
 
   const authed = (req) => {
     const id = verifySession(key, parseCookies(req.headers.cookie)[COOKIE]);
     if (!id) return false;
     const exp = sessions.get(id);
-    if (!exp || exp < Date.now()) { sessions.delete(id); return false; }
+    if (!exp || exp < Date.now()) { sessions.delete(id); sessionInfo.delete(id); return false; }
+    const info = sessionInfo.get(id) || { createdAt: Date.now(), ip: clientIp(req), agent: String(req.headers['user-agent'] || '').slice(0, 200) };
+    info.lastSeen = Date.now();
+    info.ip = clientIp(req);
+    sessionInfo.set(id, info);
     return id;
   };
   const cookie = (value, maxAge) =>
@@ -199,17 +222,32 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
           'text/html; charset=utf-8', { 'Retry-After': String(lim.retryAfter) });
       }
       let given = '';
-      try { given = new URLSearchParams(await readBody(req)).get('password') || ''; } catch { return send(res, 413, 'Too large'); }
+      let code = '';
+      try {
+        const form = new URLSearchParams(await readBody(req));
+        given = form.get('password') || '';
+        code = form.get('code') || '';
+      } catch { return send(res, 413, 'Too large'); }
       if (!passwordMatches(given, password)) {
         limiter.fail(ip);
         log(`login failed from ${ip}`);
+        events.emit('event', { action: 'sign-in', ok: false, detail: `wrong password from ${ip}` });
         if (wantsJson) return json(res, 401, { error: 'Wrong password.' });
         return send(res, 401, LOGIN_HTML('Wrong password.'), 'text/html; charset=utf-8');
+      }
+      // Optional second factor (see totp.js): counts against the same rate limit.
+      if (totpEnabled() && !verifyCode(code)) {
+        limiter.fail(ip);
+        log(`login failed from ${ip}: two-factor code`);
+        const msg = code ? 'Wrong two-factor code.' : 'Enter the code from your authenticator app.';
+        if (wantsJson) return json(res, 401, { error: msg, twoFactor: true });
+        return send(res, 401, LOGIN_HTML(msg), 'text/html; charset=utf-8');
       }
       limiter.reset(ip);
       const s = signSession(key, SESSION_TTL);
       sessions.set(s.id, s.exp);
       log(`login ok from ${ip}`);
+      events.emit('event', { action: 'sign-in', detail: `from ${ip}` });
       if (wantsJson) return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(s.value, SESSION_TTL / 1000) });
       return send(res, 303, '', 'text/plain', { Location: '/', 'Set-Cookie': cookie(s.value, SESSION_TTL / 1000) });
     }
@@ -226,6 +264,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
 
     if (req.method === 'POST' && path === '/logout') {
       sessions.delete(sid);
+      events.emit('event', { action: 'sign-out', detail: `from ${clientIp(req)}` });
       return json(res, 200, { ok: true }, { 'Set-Cookie': cookie('', 0) });
     }
     if (req.method === 'GET' && path === '/') return send(res, 200, P.html, 'text/html; charset=utf-8');
@@ -246,6 +285,18 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
     if (req.method === 'GET' && m) {
       try { assertLabel(m[1], 'project'); } catch { return json(res, 400, { error: 'bad project' }); }
       return streamLog(req, res, m[1]);
+    }
+    if (req.method === 'GET' && path === '/api/logs-all') return streamAll(req, res, SECURITY_HEADERS);
+    if (req.method === 'GET' && path === '/api/logs-all/download') {
+      return send(res, 200, combinedText(), 'text/plain; charset=utf-8',
+        { 'Content-Disposition': `attachment; filename="${downloadName('all')}"` });
+    }
+    m = path.match(/^\/api\/logs\/([^/]+)\/download$/);
+    if (req.method === 'GET' && m) {
+      try { assertLabel(m[1], 'project'); } catch { return json(res, 400, { error: 'bad project' }); }
+      if (!existsSync(logFile(m[1]))) return json(res, 404, { error: 'no log yet' });
+      return send(res, 200, readTail(logFile(m[1]), 10 * 1024 * 1024), 'text/plain; charset=utf-8',
+        { 'Content-Disposition': `attachment; filename="${downloadName(m[1])}"` });
     }
 
     m = path.match(/^\/api\/tunnels\/([^/]+)\/(up|down|destroy)$/);

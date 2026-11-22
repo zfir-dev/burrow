@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline/promises';
 import { loadConfig, requireConfig, stateDir } from './config.js';
 import { Cloudflare } from './cloudflare.js';
 import { tunnelTarget } from './naming.js';
+import { recordsEverywhere, inZone } from './zones.js';
 
 const TUNNEL_PREFIX = 'burrow-';
 const COMMENT_PREFIX = 'burrow:';
@@ -50,30 +51,34 @@ export async function prune(opts = {}) {
   const cfg = loadConfig();
   requireConfig(cfg, ['token', 'accountId', 'domain']);
   const cf = new Cloudflare({ token: cfg.token, accountId: cfg.accountId, zoneId: cfg.zoneId });
-  await cf.resolveZoneId(cfg.domain);
   const tunnels = (await cf.listTunnels()).filter((t) => t.name.startsWith(TUNNEL_PREFIX));
-  const records = await cf.recordsByCommentPrefix(COMMENT_PREFIX);
+  const records = await recordsEverywhere(cf, cfg, { prefix: COMMENT_PREFIX });
   const { orphanTunnels, orphanRecords, skipped } = findOrphans({
     tunnels, records, local: localProjectNames(), includeActive: !!opts.includeActive,
   });
+  const access = await import('./access.js');
+  const orphanApps = await access.orphanAccessApps(cf, localProjectNames());
 
   for (const t of skipped) {
     log(`Skipping ${t.name}: no local state, but it has ${t.connections.length} live connection(s) (another machine?). Use --include-active to prune it.`);
   }
-  if (!orphanTunnels.length && !orphanRecords.length) { log('Nothing to prune.'); return; }
+  if (!orphanTunnels.length && !orphanRecords.length && !orphanApps.length) { log('Nothing to prune.'); return; }
   log('Orphans:');
   for (const t of orphanTunnels) log(`  tunnel ${t.name} (${t.id})`);
   for (const r of orphanRecords) log(`  DNS ${r.type} ${r.name} -> ${r.content} (${r.comment})`);
-  if (opts.dryRun) { log(`[dry-run] would delete ${orphanTunnels.length} tunnel(s) and ${orphanRecords.length} DNS record(s)`); return; }
-  if (!opts.yes && !(await confirm(`Delete ${orphanTunnels.length} tunnel(s) and ${orphanRecords.length} DNS record(s)?`))) {
+  for (const a of orphanApps) log(`  Access app ${a.name} (${a.domain})`);
+  const apps = orphanApps.length ? ` and ${orphanApps.length} Access app(s)` : '';
+  if (opts.dryRun) { log(`[dry-run] would delete ${orphanTunnels.length} tunnel(s) and ${orphanRecords.length} DNS record(s)${apps}`); return; }
+  if (!opts.yes && !(await confirm(`Delete ${orphanTunnels.length} tunnel(s) and ${orphanRecords.length} DNS record(s)${apps}?`))) {
     log('Aborted. (Non-interactive shells need --yes.)');
     process.exitCode = 1;
     return;
   }
-  for (const r of orphanRecords) { await cf.deleteRecord(r.id); log(`Deleted DNS ${r.name}`); }
+  for (const r of orphanRecords) { await inZone(cf, r.zoneId).deleteRecord(r.id); log(`Deleted DNS ${r.name}`); }
   for (const t of orphanTunnels) {
     await cf.deleteTunnelConnections(t.id);
     await cf.deleteTunnel(t.id);
     log(`Deleted tunnel ${t.name}`);
   }
+  for (const a of orphanApps) { await access.deleteAccessApp(cf, a); log(`Deleted Access app ${a.name}`); }
 }
