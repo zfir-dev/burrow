@@ -8,6 +8,8 @@ features can be developed and merged independently. All exports are optional:
 export const order = 50;
 
 // HTML added to the page. Slot names: see SLOTS in ../panels.js.
+// rowActions are plain <button>s shown as items of the row's "⋯" menu (above Destroy), so
+// a panel never makes the table wider; keep labels short ("Edit", "Stats", "Restart").
 export const html = { toolbar: '<li>…</li>', sections: '<article>…</article>' };
 
 // Browser JS, served in /panels.js after /app.js. It registers a mixin that is merged

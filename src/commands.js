@@ -2,8 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
+import { projectDomain, zoneIdFor, recordsEverywhere, inZone } from './zones.js';
 import { loadConfig, requireConfig, writeTemplate, configPath } from './config.js';
 import { Cloudflare } from './cloudflare.js';
+import { syncAccess, removeAccessApps, privateHosts } from './access.js';
 import { tunnelName, recordComment, tunnelTarget, assertLabel } from './naming.js';
 import {
   findProjectFile, loadProjectFile, buildIngress, hostnames, DASHBOARD_PROJECT, dashboardProject,
@@ -11,6 +13,7 @@ import {
 import {
   runningPid, startConnector, stopConnector, logFile, pidFile, saveMeta, readMeta, removeMeta, localProjects,
 } from './process.js';
+import { runHook, hookContext, beforeDown, afterDown, stopBackground } from './hooks.js';
 import { isShare, removeShare } from './share.js';
 
 const log = (...a) => console.log(...a);
@@ -78,29 +81,34 @@ export async function up(projectArg, opts) {
   const dry = !!opts.dryRun;
   const cfg = loadConfig();
   const { proj, file } = resolveProject(projectArg, opts);
-  requireConfig(cfg, dry ? ['domain'] : ['token', 'accountId', 'domain']);
+  requireConfig(cfg, (dry ? [] : ['token', 'accountId']).concat(proj.domain ? [] : ['domain']));
   const name = tunnelName(proj.project);
   const comment = recordComment(proj.project);
-  const hosts = hostnames(proj, cfg.domain);
-  const ingress = buildIngress(proj, cfg.domain);
+  const domain = projectDomain(proj, cfg);
+  const hosts = hostnames(proj, domain);
+  const ingress = buildIngress(proj, domain);
 
   log(`Project ${proj.project} (${file})`);
+  await runHook('pre_up', hookContext(proj, file, hosts), { dry, enabled: opts.hooks !== false });
   if (dry) {
     step(dry, `would create or reuse remotely-managed tunnel ${name}`);
+    if (proj.domain) step(dry, `would use domain ${domain} from ${file} (checking its zone is on the account)`);
     step(dry, 'would PUT ingress config:');
     log(JSON.stringify({ config: { ingress } }, null, 2));
     for (const h of hosts) {
       step(dry, `would upsert DNS CNAME ${h.hostname} -> <tunnel-id>.cfargotunnel.com (proxied, comment "${comment}")`);
     }
     step(dry, `would delete other DNS records tagged "${comment}" not listed above`);
+    await syncAccess(null, cfg, proj, hosts, { dry });
     const pid = runningPid(proj.project);
     step(dry, pid ? `cloudflared already running (pid ${pid}); would restart it` : `would start cloudflared, pid ${pidFile(proj.project)}, log ${logFile(proj.project)}`);
     return;
   }
 
   const cf = client(cfg);
-  await cf.resolveZoneId(cfg.domain);
+  cf.zoneId = await zoneIdFor(cf, cfg, domain);
 
+  privateHosts(proj, hosts, cfg); // fail before changing anything if an allow list is missing
   let tunnel = await cf.findTunnel(name);
   if (tunnel) log(`Tunnel ${name} exists (${tunnel.id})`);
   else {
@@ -134,17 +142,26 @@ export async function up(projectArg, opts) {
       log(`Created DNS ${h.hostname}`);
     }
   }
+  // The domain changed since the last up: clear this project's records in the old zone.
+  const prev = readMeta(proj.project);
+  const prevZone = prev ? prev.zoneId || (cfg.domain ? await zoneIdFor(cf, cfg, cfg.domain) : null) : null;
+  if (prevZone && prevZone !== cf.zoneId) {
+    const old = inZone(cf, prevZone);
+    for (const r of await old.recordsByComment(comment)) { await old.deleteRecord(r.id); log(`Removed DNS ${r.name} (previous domain)`); }
+  }
   for (const r of await cf.recordsByComment(comment)) {
     if (!wanted.has(r.name)) { await cf.deleteRecord(r.id); log(`Removed stale DNS ${r.name}`); }
   }
+  await syncAccess(cf, cfg, proj, hosts);
 
   const old = await stopConnector(proj.project);
   if (old) log(`Stopped previous cloudflared (pid ${old})`);
   const token = await cf.getTunnelToken(tunnel.id);
   const pid = startConnector(proj.project, token, cfg.cloudflared);
-  saveMeta(proj.project, { project: proj.project, file, tunnelId: tunnel.id, tunnelName: name, hostnames: [...wanted] });
+  saveMeta(proj.project, { project: proj.project, file, tunnelId: tunnel.id, tunnelName: name, hostnames: [...wanted], domain, zoneId: cf.zoneId });
   log(`cloudflared started (pid ${pid}), log ${logFile(proj.project)}`);
   for (const h of hosts) log(`  ${h.service.padEnd(10)} https://${h.hostname}`);
+  await runHook('post_up', hookContext(proj, file, hosts, { BURROW_TUNNEL_ID: tunnel.id }), { enabled: opts.hooks !== false, soft: true });
 }
 
 // Stop cloudflared only. Tunnel and DNS stay, so the next `burrow up` is fast.
@@ -160,10 +177,13 @@ export async function down(projectArg, opts) {
     if (dry) {
       step(dry, pid ? `would stop ${project} cloudflared (pid ${pid})` : `${project}: not running`);
       if (temp) step(dry, `would delete share ${project} (tunnel and DNS)`);
+      await beforeDown(project, opts);
       continue;
     }
+    const hookCtx = await beforeDown(project, opts);
     const stopped = await stopConnector(project);
     log(stopped ? `${project}: stopped cloudflared (pid ${stopped})` : `${project}: not running`);
+    await afterDown(project, hookCtx, opts);
     if (temp) {
       await removeShare(project);
       log(`${project}: share removed (tunnel and DNS deleted)`);
@@ -193,9 +213,11 @@ async function destroyOne(cf, project, dry) {
     return;
   }
   const stopped = await stopConnector(project);
+  const bg = await stopBackground(project);
+  if (bg) log(`${project}: stopped pre_up background process (pid ${bg})`);
   log(stopped ? `${project}: stopped cloudflared (pid ${stopped})` : `${project}: cloudflared was not running`);
-  for (const r of await cf.recordsByComment(comment)) {
-    await cf.deleteRecord(r.id);
+  for (const r of await recordsEverywhere(cf, loadConfig(), { comment })) {
+    await inZone(cf, r.zoneId).deleteRecord(r.id);
     log(`${project}: deleted DNS ${r.type} ${r.name}`);
   }
   const tunnel = await cf.findTunnel(name);
@@ -204,6 +226,7 @@ async function destroyOne(cf, project, dry) {
     await cf.deleteTunnel(tunnel.id);
     log(`${project}: deleted tunnel ${name} (${tunnel.id})`);
   } else log(`${project}: tunnel ${name} not found`);
+  await removeAccessApps(cf, project);
   removeMeta(project);
 }
 
@@ -219,10 +242,8 @@ export async function destroy(projectArg, opts) {
   if (single) {
     const project = resolveName(projectArg, opts);
     if (dry) return destroyOne(null, project, true);
-    requireConfig(cfg, ['token', 'accountId', 'domain']);
-    const cf = client(cfg);
-    await cf.resolveZoneId(cfg.domain);
-    return destroyOne(cf, project, false);
+    requireConfig(cfg, ['token', 'accountId']);
+    return destroyOne(client(cfg), project, false);
   }
 
   // --all
@@ -231,11 +252,10 @@ export async function destroy(projectArg, opts) {
     step(dry, 'would delete every burrow-* tunnel and every DNS record tagged burrow:*');
     return;
   }
-  requireConfig(cfg, ['token', 'accountId', 'domain']);
+  requireConfig(cfg, ['token', 'accountId']);
   const cf = client(cfg);
-  await cf.resolveZoneId(cfg.domain);
   const tunnels = (await cf.listTunnels()).filter((t) => t.name.startsWith('burrow-'));
-  const records = await cf.recordsByCommentPrefix('burrow:');
+  const records = await recordsEverywhere(cf, cfg, { prefix: 'burrow:' });
   const projects = new Set([
     ...tunnels.map((t) => t.name.slice('burrow-'.length)),
     ...records.map((r) => r.comment.slice('burrow:'.length)),
@@ -254,11 +274,10 @@ export async function destroy(projectArg, opts) {
 
 export async function ls(opts = {}) {
   const cfg = loadConfig();
-  requireConfig(cfg, ['token', 'accountId', 'domain']);
+  requireConfig(cfg, ['token', 'accountId']);
   const cf = client(cfg);
-  await cf.resolveZoneId(cfg.domain);
   const tunnels = (await cf.listTunnels()).filter((t) => t.name.startsWith('burrow-'));
-  const records = await cf.recordsByCommentPrefix('burrow:');
+  const records = await recordsEverywhere(cf, cfg, { prefix: 'burrow:' });
   if (opts.json) {
     log(JSON.stringify(tunnels.map((t) => tunnelJson(t, records)), null, 2));
     return;
@@ -300,9 +319,8 @@ export async function status(projectArg, opts = {}) {
   let records = [];
   if (configured) {
     const cf = client(cfg);
-    await cf.resolveZoneId(cfg.domain);
     t = await cf.findTunnel(tunnelName(project));
-    if (t) records = await cf.recordsByComment(recordComment(project));
+    if (t) records = await recordsEverywhere(cf, cfg, { comment: recordComment(project) });
   }
   if (opts.json) {
     log(JSON.stringify({

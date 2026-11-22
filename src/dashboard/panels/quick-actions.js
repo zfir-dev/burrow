@@ -6,6 +6,15 @@ import { DASHBOARD_PROJECT } from '../../project.js';
 
 export const order = 40;
 
+// Inline SVG icons: no icon font or glyph that may be missing from the system fonts, and
+// no inline style, so the strict CSP stays as it is. Drawn with currentColor.
+const icon = (body) => `<svg class="qicon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
+export const ICONS = {
+  copy: icon('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'),
+  open: icon('<path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/>'),
+  qr: icon('<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3z"/><path d="M21 14v.01"/><path d="M14 21h.01"/><path d="M17 21h4v-4"/>'),
+};
+
 export const vendor = {
   '/vendor/qrcode.js': { pkg: 'qrcode-generator', type: 'text/javascript; charset=utf-8' },
 };
@@ -31,9 +40,9 @@ export async function route(ctx) {
 
 export const html = {
   hostExtras: `<span class="quick">
-<button class="icon" type="button" title="Copy URL" aria-label="Copy URL" @click="copyUrl(h)">⧉</button>
-<button class="icon" type="button" title="Open in a new tab" aria-label="Open URL" @click="openUrl(h)">↗</button>
-<button class="icon" type="button" title="QR code for your phone" aria-label="Show QR code" @click="showQr(h)">▦</button>
+<button class="icon" type="button" title="Copy URL" aria-label="Copy URL" @click="copyUrl(h)">${ICONS.copy}</button>
+<button class="icon" type="button" title="Open in a new tab" aria-label="Open URL" @click="openUrl(h)">${ICONS.open}</button>
+<button class="icon" type="button" title="QR code for your phone" aria-label="Show QR code" @click="showQr(h)">${ICONS.qr}</button>
 </span>`,
   rowActions: '<button class="secondary outline" :disabled="restartDisabled(p)" :title="restartTitle(p)" :aria-busy="isBusy(p)" @click="restart(p)">Restart</button>',
   dialogs: `
@@ -53,7 +62,8 @@ export const html = {
 
 export const css = `
 .quick{display:inline-flex;gap:.15rem;opacity:.45}.host:hover .quick,.quick:focus-within{opacity:1}
-button.icon{all:unset;cursor:pointer;font-size:.85rem;line-height:1;padding:.1rem .25rem;border-radius:4px;color:var(--pico-muted-color)}
+button.icon{all:unset;cursor:pointer;display:inline-flex;align-items:center;line-height:1;padding:.2rem;border-radius:4px;color:var(--pico-muted-color)}
+button.icon .qicon{display:block;width:14px;height:14px}
 button.icon:hover,button.icon:focus-visible{color:var(--pico-primary);background:var(--pico-secondary-focus)}
 .qr-dialog article{width:min(360px,100%);text-align:center}
 .qr-img img{image-rendering:pixelated;background:#fff;padding:8px;border-radius:8px}

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { loadConfig, requireConfig } from './config.js';
+import { readdirSync } from 'node:fs';
+import { loadConfig, requireConfig, stateDir } from './config.js';
 import { Cloudflare } from './cloudflare.js';
 import { tunnelName, recordComment, tunnelTarget, assertLabel } from './naming.js';
 import { startConnector, stopConnector, runningPid, saveMeta, readMeta, removeMeta, logFile } from './process.js';
@@ -59,6 +60,60 @@ export async function removeShare(project, cf) {
   removeMeta(project);
 }
 
+const alive = (pid) => {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+};
+
+// All shares this machine knows about (state files with share: true).
+export function shareNames() {
+  let names = [];
+  try { names = readdirSync(stateDir()).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)); } catch {}
+  return names.filter((n) => isShare(n)).sort();
+}
+
+// `burrow restart` for a share: re-apply its ingress, make sure its CNAME is there and
+// restart cloudflared on the same tunnel and hostname. A share whose `burrow share`
+// process is still in the foreground is skipped (that process owns it), and a share whose
+// tunnel is gone on Cloudflare is cleaned up locally instead of being recreated.
+export async function restartShare(project, opts = {}) {
+  const meta = readMeta(project);
+  if (!meta?.share) throw new Error(`${project} is not a share.`);
+  const label = project.slice(SHARE_PREFIX.length);
+  if (meta.ownerPid && meta.ownerPid !== process.pid && alive(meta.ownerPid)) {
+    log(`${project}: skipped; it belongs to a running "burrow share" (pid ${meta.ownerPid}). Stop that with Ctrl+C and share again to change it.`);
+    return 'skipped';
+  }
+  const ingress = [{ hostname: meta.hostname, service: meta.target }, { service: 'http_status:404' }];
+  if (opts.dryRun) {
+    log(`[dry-run] ${project}: would re-apply ${meta.hostname} -> ${meta.target}, check its DNS record and restart cloudflared`);
+    return 'planned';
+  }
+  const cfg = loadConfig();
+  requireConfig(cfg, ['token', 'accountId', 'domain']);
+  const cf = await client(cfg);
+  const tunnel = await cf.findTunnel(tunnelName(project));
+  if (!tunnel) {
+    await stopConnector(project);
+    removeMeta(project);
+    log(`${project}: its tunnel is gone on Cloudflare; removed the local share. Share again with: burrow share ${meta.target} --name ${label}`);
+    return 'removed';
+  }
+  await cf.putTunnelConfig(tunnel.id, ingress);
+  const comment = recordComment(project);
+  const target = tunnelTarget(tunnel.id);
+  const records = await cf.recordsByComment(comment);
+  if (!records.some((r) => r.name === meta.hostname && r.type === 'CNAME' && r.content === target)) {
+    for (const r of records) await cf.deleteRecord(r.id);
+    await cf.createRecord({ type: 'CNAME', name: meta.hostname, content: target, proxied: true, ttl: 1, comment });
+    log(`${project}: recreated DNS ${meta.hostname}`);
+  }
+  await stopConnector(project);
+  const pid = startConnector(project, await cf.getTunnelToken(tunnel.id), cfg.cloudflared);
+  saveMeta(project, { ...meta, tunnelId: tunnel.id, ownerPid: null });
+  log(`${project}: restarted cloudflared (pid ${pid}) for https://${meta.hostname} -> ${meta.target}`);
+  return 'restarted';
+}
+
 export async function share(target, opts = {}) {
   const dry = !!opts.dryRun;
   const cfg = loadConfig();
@@ -84,6 +139,8 @@ export async function share(target, opts = {}) {
   saveMeta(project, {
     project, share: true, hostname, target: url, tunnelId: tunnel.id, tunnelName: tunnelName(project),
     hostnames: [hostname], createdAt: new Date().toISOString(),
+    // A share in the foreground belongs to this process; restart leaves it alone.
+    ownerPid: opts.detach ? null : process.pid,
   });
   let pid;
   try {
