@@ -185,7 +185,7 @@ It shows every burrow project with:
 - local cloudflared state (running/stopped, pid, uptime)
 - connector status from the Cloudflare API (healthy/degraded/down, connections, colos)
 - a live log viewer that streams `~/.local/state/burrow/<project>.log` over SSE
-- **Up** / **Down** / **Destroy** buttons. **Destroy** opens a dialog and stays disabled until you type the project name.
+- **Up** / **Down** buttons and **Destroy…** (in the row's **⋯** menu). **Destroy** opens a dialog and stays disabled until you type the project name.
   The dashboard's own project can't be stopped from the UI.
 
 | Sign in | Live logs |
@@ -219,6 +219,12 @@ and extra fields on `/api/tunnels`. Panel routes run only after the session chec
 POSTs need the same `X-Burrow: 1` header, so every feature gets the same login, cookie and CSRF
 protection. Commands the dashboard runs get `BURROW_SOURCE=dashboard` in their environment.
 See [`src/dashboard/panels/README.md`](src/dashboard/panels/README.md) for the interface.
+
+The table stays within the window with every panel merged: each row shows **Logs**, **Up** and
+**Down**, and the rest (**Destroy…** and panel actions such as Edit, Stats and Restart) are in
+the row's **⋯** menu. Long hostnames are shortened with an ellipsis (hover for the full name), the
+Uptime column is hidden below 1240 px, and below 1180 px each project becomes a card, so it also
+works on a phone.
 
 ### Add and edit projects
 
