@@ -4,6 +4,7 @@ import YAML from 'yaml';
 import { configPath, stateDir } from './config.js';
 import { parseProject } from './project.js';
 import { readMeta, saveMeta } from './process.js';
+import { shareNames } from './share.js';
 
 const log = (...a) => console.error(...a); // stdout may carry the bundle
 
@@ -11,7 +12,7 @@ const log = (...a) => console.error(...a); // stdout may carry the bundle
 export function cleanProject(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('project entry must be a mapping');
   const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => obj[k] !== undefined).map((k) => [k, obj[k]]));
-  const out = pick(raw, ['project', 'autostart']);
+  const out = pick(raw, ['project', 'domain', 'autostart']);
   out.services = (Array.isArray(raw.services) ? raw.services : []).map((s) => {
     const svc = pick(s || {}, ['name', 'root', 'url', 'originRequest']);
     if (Array.isArray(s?.paths) && s.paths.length) svc.paths = s.paths.map((p) => pick(p || {}, ['path', 'url', 'originRequest']));
@@ -28,6 +29,11 @@ function rememberedProjects() {
 }
 
 export function buildBundle(filter = []) {
+  const shares = shareNames();
+  const asked = filter.filter((f) => shares.includes(f));
+  if (asked.length) {
+    throw new Error(`${asked.join(', ')}: temporary share(s) from "burrow share" can't be exported; share again on the other machine.`);
+  }
   const projects = [];
   for (const { name, meta } of rememberedProjects()) {
     if (filter.length && !filter.includes(name)) continue;
@@ -41,10 +47,17 @@ export function buildBundle(filter = []) {
 export async function exportProjects(file, opts = {}) {
   const filter = (opts.project || '').split(',').map((s) => s.trim()).filter(Boolean);
   const bundle = buildBundle(filter);
+  // Shares are throwaway hostnames tied to this machine, so they're never exported.
+  const skipped = filter.length ? [] : shareNames();
+  const shareNote = skipped.length
+    ? `${skipped.length} temporary share(s) not exported (${skipped.join(', ')}); shares only live on the machine that created them.`
+    : '';
+  if (shareNote) log(`Note: ${shareNote}`);
   const asJson = opts.json || /\.json$/i.test(file || '');
   const text = asJson
     ? JSON.stringify(bundle, null, 2) + '\n'
-    : '# burrow project export. Contains tunnel.yml settings only, no tokens or passwords.\n' + YAML.stringify(bundle, { lineWidth: 0 });
+    : '# burrow project export. Contains tunnel.yml settings only, no tokens or passwords.\n' +
+      (shareNote ? `# ${shareNote}\n` : '') + YAML.stringify(bundle, { lineWidth: 0 });
   if (!file || file === '-') { process.stdout.write(text); return bundle; }
   writeFileSync(resolve(file), text);
   log(`Exported ${bundle.projects.length} project(s) to ${resolve(file)}: ${bundle.projects.map((p) => p.project).join(', ')}`);
