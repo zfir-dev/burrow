@@ -23,11 +23,27 @@ Removed https://k3x9q2mf7a.example.dev
   `burrow destroy share-<label>` works too.
 - `--expires <duration>` (`30m`, `2h`, `7d`; 1 minute to 30 days) gives it an end time,
   stored in `share-<label>.json` as `expiresAt`. A foreground share removes itself when that
-  time passes. A detached share is stopped by the dashboard when it's running (within about
-  30 seconds, or as soon as it next starts); without a dashboard it stays up until
-  `burrow down share-<label>`.
+  time passes. A detached share gets a small background watcher process
+  (`burrow _share-expire share-<label>`, its pid is `expiryPid` in the state file) that
+  removes it at that time like `burrow down share-<label>`, so no dashboard is needed. See
+  [Expiry](#expiry).
 - `--dry-run` prints the plan without calling Cloudflare.
 - Don't name your own projects `share-…`, so they can't be mistaken for shares.
+
+### Expiry
+
+| Share | Who enforces `expiresAt` |
+| ----- | ------------------------ |
+| foreground `burrow share --expires …` | the `burrow share` process itself (checks every 2 s) |
+| `--detach --expires …`, or started from the dashboard with an expiry | its expiry watcher (sleeps until the expiry, re-reading the state file at least every 15 s) |
+| any of them, as a fallback | the dashboard, when it runs (within about 30 s, or when it next starts) |
+
+The watcher re-reads `expiresAt`, so **+1 hour** in the dashboard (or editing the state
+file) moves the end time; setting it to never ends the watcher. It removes the share like
+`burrow down`, records **share expired** in the history and exits; it also exits when the
+share is removed some other way. It doesn't survive a reboot, but neither does the share's
+cloudflared: `burrow restart` (or autostart) brings the share back and starts the watcher
+again, which removes the share at once if it expired meanwhile.
 
 ### From the dashboard
 
