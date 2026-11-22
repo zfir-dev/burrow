@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import YAML from 'yaml';
@@ -184,14 +184,48 @@ export async function runHook(name, ctx, { dry = false, enabled = true, soft = f
   const label = `${name}${hook.background ? ' (background)' : ''}`;
   if (dry) { log(`[dry-run] would run ${label} hook in ${dirname(ctx.file)}: ${hook.run}`); return; }
   log(`Running ${label} hook: ${hook.run}`);
+  const started = Date.now();
   try {
     if (hook.background) await startBackground(hook, ctx);
     else await runForeground(name, hook, ctx);
+    recordHookResult({ project: ctx.project, hook: name, background: hook.background, ok: true, started });
   } catch (e) {
+    recordHookResult({ project: ctx.project, hook: name, background: hook.background, ok: false, started, error: e.message.split(`: ${hook.run}`).join('') });
     if (!soft) throw e;
     console.error(`burrow: ${e.message}`);
     process.exitCode = 1;
   }
+}
+
+// Hook results (for the dashboard): JSON Lines, newest last, without the command or its
+// output (both can hold secrets). Best effort; never fails the command.
+export const hookResultsFile = () => join(hookDir(), 'results.jsonl');
+const KEEP_RESULTS = 500;
+export function recordHookResult({ project, hook, background, ok, started, error }) {
+  try {
+    mkdirSync(hookDir(), { recursive: true, mode: 0o700 });
+    const file = hookResultsFile();
+    const entry = {
+      at: new Date(started).toISOString(), project, hook, background: !!background, ok,
+      durationMs: Date.now() - started, source: process.env.BURROW_SOURCE || 'cli',
+      ...(error ? { error: String(error).slice(0, 300) } : {}),
+    };
+    appendFileSync(file, JSON.stringify(entry) + '\n', { mode: 0o600 });
+    const lines = readFileSync(file, 'utf8').split('\n').filter(Boolean);
+    if (lines.length > KEEP_RESULTS * 2) writeFileSync(file, lines.slice(-KEEP_RESULTS).join('\n') + '\n', { mode: 0o600 });
+  } catch {}
+}
+export function readHookResults({ limit = 100, project } = {}) {
+  let lines = [];
+  try { lines = readFileSync(hookResultsFile(), 'utf8').split('\n').filter(Boolean); } catch { return []; }
+  const out = [];
+  for (let i = lines.length - 1; i >= 0 && out.length < limit; i--) {
+    let e;
+    try { e = JSON.parse(lines[i]); } catch { continue; }
+    if (project && e.project !== project) continue;
+    out.push(e);
+  }
+  return out;
 }
 
 // down: pre_down runs while cloudflared is still up. Hooks only run for a project that

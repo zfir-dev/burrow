@@ -43,3 +43,6 @@ hooks:
 - `--no-hooks` on `up` or `down` skips the hooks. `down --no-hooks` still stops a background
   `pre_up` process. `--dry-run` lists the hooks that would run. `destroy` runs no hooks.
 - Hooks are never copied by `burrow export`, so an imported bundle can't carry commands.
+- Each run is recorded in `~/.local/state/burrow/hooks/results.jsonl` (time, project, hook,
+  ok or the failure reason, duration, source; never the command or its output) for the
+  dashboard's **Hooks** view.

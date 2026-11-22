@@ -21,3 +21,8 @@ work with whatever git credentials you already use (SSH keys, a credential helpe
 Every git and npm call has a timeout, and git never stops to ask for a password
 (`GIT_TERMINAL_PROMPT=0`, SSH in batch mode), so `burrow update` can't hang in a script.
 With nvm, a global install belongs to the active Node version.
+
+`burrow update --check --json` prints one JSON object instead of text: `mode` (`git`, `npm` or
+`unknown`), `version`, `available` (`true`, `false`, or `null` when it can't tell), `head`,
+`latest`, and for a git checkout `behind`, `ahead`, `commits` and `remoteVersion`. The
+dashboard uses it for its update notice (`BURROW_UPDATE_CHECK=off` turns that off).

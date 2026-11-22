@@ -517,7 +517,29 @@ use **Up** afterwards. Backups are limited to 1 MB.
 
 ### Hooks and updates
 
-_Not merged yet (`feature/ui-hooks-updates`)._
+**Hooks** in the toolbar lists recent [hook](docs/hooks.md) runs: when, project, hook
+(`pre_up`, `post_up`, `pre_down`, `post_down`, background or not), ok or the reason it failed
+(`post_up hook failed (exit 1)`, `timed out after 120s`, …), how long it took, and where it
+came from (`cli`, `dashboard`, `boot`). A row whose latest hook run failed gets a
+**hook failed** badge. `burrow up` and `down` record runs in
+`~/.local/state/burrow/hooks/results.jsonl`, keeping the last 500. The hook's command and
+output are never recorded, because they can hold secrets. Dry runs aren't recorded.
+`GET /api/hooks?project=&limit=` returns them.
+
+The page footer shows the burrow version and whether an update is available. While a page is
+open, the dashboard runs `burrow update --check --json` at most once a day and caches the
+result in `~/.local/state/burrow/cache/update.json`. For a git checkout that's a `git fetch`;
+for a global npm install it's a `git ls-remote` on the install source. **Check for updates**
+runs it now. When newer commits exist, an **Update available** button opens the version
+change, the new commits, and the commands to run in a terminal (`burrow update`, then
+`burrow dashboard up`). Installing isn't done from the browser. **Remind me later** hides the
+notice until something newer appears. A failed check keeps the last result and shows the
+error, with any credentials in a URL removed.
+
+| Variable | Default | Does |
+| --- | --- | --- |
+| `BURROW_UPDATE_CHECK` | on | `off` turns the dashboard's update check off (no git calls) |
+| `BURROW_UPDATE_CHECK_HOURS` | `24` | How old the cached result can get before the next check |
 
 ## Tests
 

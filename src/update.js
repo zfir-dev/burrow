@@ -173,12 +173,32 @@ function updateNpm(info, opts) {
   log(`burrow is now ${version}.`);
 }
 
+// One object for `update --check --json`: is something newer available, and what.
+export function checkSummary(info) {
+  const base = { mode: info.mode, version: info.pkg.version, checkedAt: new Date().toISOString() };
+  if (info.mode === 'git') {
+    const c = checkGit(info);
+    return {
+      ...base, available: c.behind > 0, branch: c.branch, upstream: c.upstream, head: short(c.head), latest: short(c.remote),
+      behind: c.behind, ahead: c.ahead, commits: c.commits, remoteVersion: c.remoteVersion,
+    };
+  }
+  const c = checkNpm(info);
+  return { ...base, available: c.upToDate === null ? null : !c.upToDate, head: short(c.installed), latest: short(c.latest), source: c.url };
+}
+
 export async function update(opts = {}) {
   const info = detectInstall();
   if (info.mode === 'unknown') {
     let hint = 'npm install -g github:<owner>/burrow';
     try { hint = `npm install -g ${updateSource(info).spec}`; } catch {}
+    if (opts.json) { console.log(JSON.stringify({ mode: 'unknown', version: info.pkg.version, available: null, checkedAt: new Date().toISOString() })); return; }
     throw new Error(`Can't tell how burrow at ${info.root} was installed (not a git checkout or a global npm install). Reinstall with: ${hint}`);
+  }
+  if (opts.json) {
+    if (!opts.check) throw new Error('--json only works with --check');
+    console.log(JSON.stringify(checkSummary(info)));
+    return;
   }
   if (info.mode === 'git') return opts.check ? reportGit(checkGit(info), info) : updateGit(info, opts);
   return opts.check ? reportNpm(checkNpm(info), info) : updateNpm(info, opts);
