@@ -31,7 +31,7 @@ export function checkTarget(url, timeoutMs = 1500) {
 }
 
 function projectsToCheck(projectArg, opts) {
-  const file = findProjectFile(opts.file);
+  const file = opts.all ? null : findProjectFile(opts.file);
   if (file && (!projectArg || loadProjectFile(file).project === projectArg)) return [file];
   if (projectArg) {
     const meta = readMeta(projectArg);
@@ -44,31 +44,38 @@ function projectsToCheck(projectArg, opts) {
   return [...new Set(names.map((n) => readMeta(n)?.file).filter((f) => f && existsSync(f)))];
 }
 
+// opts.json: print one JSON line { counts, checks: [{ section, status, label, detail, fix }] }
+// instead of the text report (the dashboard's Doctor panel reads it). opts.all: check every
+// remembered project and ignore ./tunnel.yml.
 export async function doctor(projectArg, opts = {}) {
   const counts = { pass: 0, warn: 0, fail: 0, skip: 0 };
-  const report = (status, label, detail = '') => {
+  const checks = [];
+  let current = '';
+  const out = opts.json ? () => {} : (...a) => console.log(...a);
+  const report = (status, label, detail = '', fix = '') => {
     counts[status]++;
-    console.log(`  ${MARK[status]} ${label}${detail ? ` - ${detail}` : ''}`);
+    checks.push({ section: current, status, label, detail, ...(fix && (status === 'fail' || status === 'warn') ? { fix } : {}) });
+    out(`  ${MARK[status]} ${label}${detail ? ` - ${detail}` : ''}`);
   };
-  const section = (title) => console.log(`\n${title}`);
+  const section = (title) => { current = title; out(`\n${title}`); };
   const cfg = loadConfig();
 
   section('Config');
   if (cfg.exists) {
     report('pass', 'config file', cfg.path);
     const mode = statSync(cfg.path).mode & 0o777;
-    if (mode & 0o077) report('warn', 'config permissions', `${mode.toString(8)}; run chmod 600 ${cfg.path}`);
+    if (mode & 0o077) report('warn', 'config permissions', `${mode.toString(8)}; run chmod 600 ${cfg.path}`, `Run: chmod 600 ${cfg.path}`);
     else report('pass', 'config permissions', mode.toString(8));
   } else {
-    report('fail', 'config file', `${cfg.path} missing; run burrow init`);
+    report('fail', 'config file', `${cfg.path} missing; run burrow init`, 'Run "burrow init" on the server, then fill in the token, account ID and domain.');
   }
-  report(cfg.token ? 'pass' : 'fail', 'CF_API_TOKEN', cfg.token ? 'set' : 'missing');
-  report(cfg.accountId ? 'pass' : 'fail', 'CF_ACCOUNT_ID', cfg.accountId ? 'set' : 'missing');
+  report(cfg.token ? 'pass' : 'fail', 'CF_API_TOKEN', cfg.token ? 'set' : 'missing', 'Create an API token (Account > Cloudflare Tunnel > Edit, Zone > DNS > Edit) and set CF_API_TOKEN in the config.');
+  report(cfg.accountId ? 'pass' : 'fail', 'CF_ACCOUNT_ID', cfg.accountId ? 'set' : 'missing', 'Copy the account ID from the Cloudflare dashboard into CF_ACCOUNT_ID.');
   try {
     assertDomain(cfg.domain);
     report('pass', 'BURROW_DOMAIN', cfg.domain);
   } catch {
-    report('fail', 'BURROW_DOMAIN', cfg.domain ? `invalid: ${cfg.domain}` : 'missing');
+    report('fail', 'BURROW_DOMAIN', cfg.domain ? `invalid: ${cfg.domain}` : 'missing', 'Set BURROW_DOMAIN to a domain (zone) on your Cloudflare account, e.g. example.dev.');
   }
 
   section('Cloudflare API');
@@ -78,23 +85,26 @@ export async function doctor(projectArg, opts = {}) {
     report('skip', 'API checks', 'config incomplete');
   } else {
     const cf = new Cloudflare({ token: cfg.token, accountId: cfg.accountId, zoneId: cfg.zoneId });
-    const tryCheck = async (label, fn) => {
-      try { report('pass', label, await fn()); return true; } catch (e) { report('fail', label, e.message); return false; }
+    const tryCheck = async (label, fn, fix) => {
+      try { report('pass', label, await fn()); return true; } catch (e) { report('fail', label, e.message, fix); return false; }
     };
     await tryCheck('token', async () => {
       const v = await cf.verifyToken();
       if (v?.status && v.status !== 'active') throw new Error(`status ${v.status}`);
       return `${v?.status || 'ok'}${v?.expires_on ? `, expires ${v.expires_on}` : ''}`;
-    });
-    if (await tryCheck('zone', async () => `${cfg.domain} (${await cf.resolveZoneId(cfg.domain)})`)) {
-      await tryCheck('tunnel access', async () => `${(await cf.listTunnels()).length} tunnel(s) in the account`);
-      await tryCheck('DNS access', async () => `${(await cf.recordsByCommentPrefix('burrow:')).length} burrow record(s)`);
+    }, 'The token is wrong, expired or disabled: create a new one and update CF_API_TOKEN.');
+    if (await tryCheck('zone', async () => `${cfg.domain} (${await cf.resolveZoneId(cfg.domain)})`,
+      `Add ${cfg.domain} to the account in CF_ACCOUNT_ID, or give the token Zone > Zone > Read for it.`)) {
+      await tryCheck('tunnel access', async () => `${(await cf.listTunnels()).length} tunnel(s) in the account`,
+        'Give the token Account > Cloudflare Tunnel > Edit.');
+      await tryCheck('DNS access', async () => `${(await cf.recordsByCommentPrefix('burrow:')).length} burrow record(s)`,
+        `Give the token Zone > DNS > Edit for ${cfg.domain}.`);
     }
   }
 
   section('cloudflared');
   const v = spawnSync(cfg.cloudflared, ['--version'], { encoding: 'utf8', timeout: 10000 });
-  if (v.error || v.status !== 0) report('fail', 'cloudflared', `${cfg.cloudflared} not runnable (${v.error?.code || `exit ${v.status}`})`);
+  if (v.error || v.status !== 0) report('fail', 'cloudflared', `${cfg.cloudflared} not runnable (${v.error?.code || `exit ${v.status}`})`, 'Install cloudflared (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) or set CLOUDFLARED_BIN to its path.');
   else report('pass', 'cloudflared', (v.stdout || v.stderr).trim().split('\n')[0]);
 
   const files = projectsToCheck(projectArg, opts);
@@ -102,22 +112,23 @@ export async function doctor(projectArg, opts = {}) {
     let proj;
     try { proj = loadProjectFile(file); } catch (e) {
       section(`Project file ${file}`);
-      report('fail', 'tunnel.yml', e.message);
+      report('fail', 'tunnel.yml', e.message, `Fix ${file} (burrow up prints the same error).`);
       continue;
     }
     section(`Project ${proj.project} (${file})`);
     for (const s of proj.services) {
       for (const p of s.paths) {
         const r = await checkTarget(p.url);
-        report(r.ok ? 'pass' : 'fail', `${s.name} ${p.path} -> ${p.url}`, r.detail);
+        report(r.ok ? 'pass' : 'fail', `${s.name} ${p.path} -> ${p.url}`, r.detail, `Start the app behind ${p.url}, or fix the URL in tunnel.yml.`);
       }
       const r = await checkTarget(s.url);
-      report(r.ok ? 'pass' : 'fail', `${s.name} -> ${s.url}`, r.detail);
+      report(r.ok ? 'pass' : 'fail', `${s.name} -> ${s.url}`, r.detail, `Start the app behind ${s.url}, or fix the URL in tunnel.yml.`);
     }
   }
   if (!files.length) { section('Projects'); report('skip', 'local services', 'no tunnel.yml here and no remembered projects'); }
 
-  console.log(`\n${counts.pass} passed, ${counts.warn} warning(s), ${counts.fail} failed${counts.skip ? `, ${counts.skip} skipped` : ''}`);
+  out(`\n${counts.pass} passed, ${counts.warn} warning(s), ${counts.fail} failed${counts.skip ? `, ${counts.skip} skipped` : ''}`);
+  if (opts.json) console.log(JSON.stringify({ counts, checks }));
   if (counts.fail) process.exitCode = 1;
   return counts;
 }

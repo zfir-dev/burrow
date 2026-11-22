@@ -4,6 +4,7 @@ import YAML from 'yaml';
 import { configPath, stateDir } from './config.js';
 import { parseProject } from './project.js';
 import { readMeta, saveMeta } from './process.js';
+import { shareNames } from './share.js';
 
 const log = (...a) => console.error(...a); // stdout may carry the bundle
 
@@ -28,6 +29,11 @@ function rememberedProjects() {
 }
 
 export function buildBundle(filter = []) {
+  const shares = shareNames();
+  const asked = filter.filter((f) => shares.includes(f));
+  if (asked.length) {
+    throw new Error(`${asked.join(', ')}: temporary share(s) from "burrow share" can't be exported; share again on the other machine.`);
+  }
   const projects = [];
   for (const { name, meta } of rememberedProjects()) {
     if (filter.length && !filter.includes(name)) continue;
@@ -41,10 +47,17 @@ export function buildBundle(filter = []) {
 export async function exportProjects(file, opts = {}) {
   const filter = (opts.project || '').split(',').map((s) => s.trim()).filter(Boolean);
   const bundle = buildBundle(filter);
+  // Shares are throwaway hostnames tied to this machine, so they're never exported.
+  const skipped = filter.length ? [] : shareNames();
+  const shareNote = skipped.length
+    ? `${skipped.length} temporary share(s) not exported (${skipped.join(', ')}); shares only live on the machine that created them.`
+    : '';
+  if (shareNote) log(`Note: ${shareNote}`);
   const asJson = opts.json || /\.json$/i.test(file || '');
   const text = asJson
     ? JSON.stringify(bundle, null, 2) + '\n'
-    : '# burrow project export. Contains tunnel.yml settings only, no tokens or passwords.\n' + YAML.stringify(bundle, { lineWidth: 0 });
+    : '# burrow project export. Contains tunnel.yml settings only, no tokens or passwords.\n' +
+      (shareNote ? `# ${shareNote}\n` : '') + YAML.stringify(bundle, { lineWidth: 0 });
   if (!file || file === '-') { process.stdout.write(text); return bundle; }
   writeFileSync(resolve(file), text);
   log(`Exported ${bundle.projects.length} project(s) to ${resolve(file)}: ${bundle.projects.map((p) => p.project).join(', ')}`);
@@ -53,28 +66,56 @@ export async function exportProjects(file, opts = {}) {
 
 export const defaultImportDir = () => join(dirname(configPath()), 'projects');
 
-export async function importProjects(file, opts = {}) {
-  const text = file === '-' ? readFileSync(0, 'utf8') : readFileSync(resolve(file), 'utf8');
-  const bundle = YAML.parse(text);
+// A parsed, checked export bundle (YAML or JSON text).
+export function parseBundle(text, source = 'the file') {
+  let bundle;
+  try { bundle = YAML.parse(String(text)); } catch (e) { throw new Error(`${source} is not valid YAML/JSON: ${e.message}`); }
   if (bundle?.burrow !== 'projects' || bundle.version !== 1 || !Array.isArray(bundle.projects)) {
-    throw new Error(`${file} is not a burrow export (expected "burrow: projects" and "version: 1")`);
+    throw new Error(`${source} is not a burrow export (expected "burrow: projects" and "version: 1")`);
   }
+  return bundle;
+}
+
+// What importing would do, per project: { project, dest, status: new | exists | known,
+// knownAt, proj, error }. "exists": dest is already there; "known": the project is
+// remembered at another path. Both need force to be replaced.
+export function planImport(bundle, opts = {}) {
   const dir = resolve(opts.dir || defaultImportDir());
-  const results = { written: [], skipped: [] };
-  for (const raw of bundle.projects) {
-    const proj = cleanProject(raw);
+  return bundle.projects.map((raw, i) => {
+    let proj;
+    try { proj = cleanProject(raw); } catch (e) { return { project: String(raw?.project ?? `#${i + 1}`), status: 'invalid', error: e.message }; }
     const dest = join(dir, `${proj.project}.tunnel.yml`);
     const meta = readMeta(proj.project);
     const known = meta?.file && existsSync(meta.file) && resolve(meta.file) !== dest;
-    if (!opts.force && (existsSync(dest) || known)) {
+    const status = known ? 'known' : existsSync(dest) ? 'exists' : 'new';
+    return { project: proj.project, dest, status, ...(known ? { knownAt: meta.file } : {}), proj };
+  });
+}
+
+// Write one planned entry (see planImport).
+export function writeImported(p) {
+  const meta = readMeta(p.project);
+  mkdirSync(dirname(p.dest), { recursive: true });
+  writeFileSync(p.dest, `# imported by burrow on ${new Date().toISOString()}\n` + YAML.stringify(p.proj, { lineWidth: 0 }));
+  saveMeta(p.project, { ...(meta || {}), project: p.project, file: p.dest });
+}
+
+export async function importProjects(file, opts = {}) {
+  const text = file === '-' ? readFileSync(0, 'utf8') : readFileSync(resolve(file), 'utf8');
+  const bundle = parseBundle(text, file);
+  const results = { written: [], skipped: [] };
+  for (const p of planImport(bundle, opts)) {
+    if (p.status === 'invalid') throw new Error(p.error);
+    const { proj, dest } = p;
+    const meta = readMeta(proj.project);
+    const known = p.status === 'known';
+    if (!opts.force && p.status !== 'new') {
       log(`skip ${proj.project}: already ${known ? `known at ${meta.file}` : `at ${dest}`} (use --force to replace)`);
       results.skipped.push(proj.project);
       continue;
     }
     if (opts.dryRun) { log(`[dry-run] would write ${dest}`); results.written.push(proj.project); continue; }
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(dest, `# imported by burrow on ${new Date().toISOString()}\n` + YAML.stringify(proj, { lineWidth: 0 }));
-    saveMeta(proj.project, { ...(meta || {}), project: proj.project, file: dest });
+    writeImported(p);
     log(`imported ${proj.project} -> ${dest}`);
     results.written.push(proj.project);
   }
