@@ -323,13 +323,20 @@ where it came from:
 - `boot`: `burrow autostart` from the systemd unit
 
 Dashboard **sign-in** (ok or wrong password, with the client IP) and **sign-out** are recorded
-too, as `dashboard` events; the password never is. Attempts refused by the rate limit aren't.
+too, as `dashboard` events; the password never is. So are wrong or missing two-factor codes, and
+sign-ins refused by the rate limit (5 failures per IP in 15 minutes): one entry per IP per
+minute, `blocked by the rate limit from <ip>; retry in <n>s`, saying how many more were refused
+since the previous entry. The server log still has every refused attempt.
 
 A run that is cut short still leaves an entry, marked failed unless it exited with code 0:
 `stopped by SIGINT` (Ctrl+C), `stopped by SIGTERM` / `SIGHUP`, or `exited before finishing`
 when a command calls `process.exit()`. The exit code stays what it was (130 for Ctrl+C,
 143 for SIGTERM), and a command with its own Ctrl+C cleanup (such as `share`) still runs it.
-Only `kill -9` (SIGKILL) can't be caught and leaves no entry.
+Only `kill -9` (SIGKILL) leaves no entry: the kernel ends the process without running any of
+its code, so nothing can be written. The same goes for a power loss or the OOM killer. If a
+command seems to be missing from the history, check whether it was killed that way (for example
+`journalctl -k` for the OOM killer); its effects (a running connector, DNS records) are still
+visible in the project table.
 
 Filter by project or source. Read-only commands (`ls`, `status`, `logs`, `stats`, …) and
 `--dry-run` aren't recorded. Events are JSON Lines in `~/.local/state/burrow/history/events.jsonl`
