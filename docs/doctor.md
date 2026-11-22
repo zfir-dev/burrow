@@ -41,17 +41,37 @@ Project acme-shop (/home/me/code/acme-shop/tunnel.yml)
   - checks the zone of its own [`domain:`](domains.md), when that differs from `BURROW_DOMAIN`
     (fails if the zone isn't on the account or the token can't see it; skipped with `--offline`);
   - validates its [`hooks:`](hooks.md) (fails on the same errors `burrow up` would), and warns
-    when a hook's command can't be found: the first word on `PATH`, or a `./script` relative to
-    the tunnel.yml directory. Commands starting with variable assignments, shell builtins or
-    other shell syntax aren't second-guessed.
+    when a hook's command can't be found. See [Hook commands](#hook-commands).
 
 ```console
 Project acme-shop (/home/me/code/acme-shop/tunnel.yml)
   ✓ domain example.org - zone 4d2e…
-  ✓ hook pre_up (background) - /usr/bin/npm
-  ! hook post_up - notify-send not found on PATH
+  ✓ hook pre_up (background) - found: cd, npm
+  ! hook post_up - npm: no "notify" script in /home/me/code/acme-shop/web/package.json
+  ! hook pre_down - notify-send not found on PATH
   ✓ app -> http://localhost:3100 - reachable
 ```
+
+### Hook commands
+
+Hooks are `/bin/sh` command lines. Doctor reads them with a small shell-word parser and
+**never runs anything**:
+
+- The line is split into simple commands at `;`, `&`, `&&`, `||`, `|` and newlines, honouring
+  `'…'`, `"…"`, backslashes and comments; redirections (`> log`, `2>&1`, `< in`) are skipped.
+- In each command, `NAME=value` prefixes and wrappers (`env`, `exec`, `nohup`, `command`,
+  `time`, `nice`, `setsid`) are skipped, and the command is checked: shell builtins (`cd`,
+  `export`, `echo`, `test`, …) are fine, `./script` or `/abs/path` must be an executable
+  file, anything else must be on `PATH`.
+- `cd <dir>` is followed: the directory must exist, and later commands are checked there
+  (`cd web && ./start.sh` looks for `web/start.sh`).
+- `npm run <x>`, `npm start|test|stop|restart`, `yarn [run] <x>` and `pnpm [run] <x>` also need
+  script `<x>` in that directory's `package.json` (`npm start` is fine with a `server.js`).
+- What can't be known without running it is listed as *not checked* instead of being
+  guessed: `$(…)` and backticks, a command or `cd` target that is a `$VARIABLE`, subshells,
+  `{ …; }` groups, here-documents and `if`/`for`/`while`/`case` blocks.
+
+A problem is a warning (`!`), not a failure: PATH can differ when the hook really runs.
 
 `--json` prints the report as one line of JSON (`counts` and `checks`, each with `section`,
 `status`, `label`, `detail` and, for warnings and failures, a `fix` hint). `--all` checks every
