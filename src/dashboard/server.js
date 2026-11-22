@@ -10,7 +10,8 @@ import { collect, invalidateCloudflare } from './data.js';
 import {
   passwordMatches, sessionKey, signSession, verifySession, RateLimiter, parseCookies, newSecret, MIN_PASSWORD_LENGTH,
 } from './auth.js';
-import { LOGIN_HTML, APP_HTML, APP_CSS, APP_JS, LOGIN_JS } from './ui.js';
+import { LOGIN_HTML, renderApp, APP_CSS, APP_JS, LOGIN_JS } from './ui.js';
+import { loadPanels, sortPanels, panelJs, panelCss, panelVendor, events } from './panels.js';
 
 // Vendored front-end libraries, served from node_modules (no CDN, works offline).
 const require = createRequire(import.meta.url);
@@ -19,8 +20,8 @@ export const VENDOR = {
   '/vendor/pico.min.css': { pkg: '@picocss/pico/css/pico.min.css', type: 'text/css; charset=utf-8' },
 };
 const vendorCache = new Map();
-function vendorAsset(path) {
-  if (!vendorCache.has(path)) vendorCache.set(path, readFileSync(require.resolve(VENDOR[path].pkg)));
+function vendorAsset(path, entry = VENDOR[path]) {
+  if (!vendorCache.has(path)) vendorCache.set(path, readFileSync(require.resolve(entry.pkg)));
   return vendorCache.get(path);
 }
 
@@ -66,9 +67,12 @@ export function clientIp(req) {
   return loopback && typeof cf === 'string' && cf ? cf : remote;
 }
 
-function runCli(args, timeoutMs = 90000) {
+// BURROW_SOURCE tells the CLI (e.g. the event history) that the dashboard ran it.
+export function runCli(args, timeoutMs = 90000) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [BIN, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+    const child = spawn(process.execPath, [BIN, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, BURROW_SOURCE: 'dashboard' },
+    });
     let out = '';
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });
@@ -124,7 +128,12 @@ function streamLog(req, res, project) {
   req.on('close', () => { clearInterval(poll); clearInterval(ping); });
 }
 
-export function createDashboard({ password, log = console.log } = {}) {
+// Panels (see ./panels/README.md) are loaded from ./panels/*.js, or passed in (tests).
+function buildPanels(list) {
+  return { list, html: renderApp(list), js: panelJs(list), css: panelCss(list), vendor: panelVendor(list) };
+}
+
+export function createDashboard({ password, log = console.log, panels } = {}) {
   if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
     throw new Error(`Set BURROW_DASHBOARD_PASSWORD (at least ${MIN_PASSWORD_LENGTH} characters) in the burrow config.`);
   }
@@ -132,6 +141,25 @@ export function createDashboard({ password, log = console.log } = {}) {
   const sessions = new Map(); // id -> exp (server-side, so logout really ends a session)
   const limiter = new RateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
   const busy = new Set();
+  const ready = (panels ? Promise.resolve(sortPanels(panels)) : loadPanels()).then(buildPanels);
+  ready.catch((e) => log(`error: dashboard panels failed to load: ${e.message}`));
+  // Run fn while holding the per-project lock; null when the project is busy.
+  const withBusy = async (project, fn) => {
+    if (busy.has(project)) return null;
+    busy.add(project);
+    try { return await fn(); } finally { busy.delete(project); }
+  };
+  const panelCtx = (req, res, url) => ({
+    req, res, url, method: req.method, path: url.pathname, log, events, withBusy, runCli, loadConfig,
+    invalidate: invalidateCloudflare,
+    clientIp: clientIp(req),
+    json: (status, obj, extra) => json(res, status, obj, extra),
+    send: (status, body, type, extra) => send(res, status, body, type, extra),
+    readJson: async (limit = 16384) => {
+      const text = await readBody(req, limit);
+      try { return text ? JSON.parse(text) : {}; } catch { return null; }
+    },
+  });
 
   const authed = (req) => {
     const id = verifySession(key, parseCookies(req.headers.cookie)[COOKIE]);
@@ -146,13 +174,15 @@ export function createDashboard({ password, log = console.log } = {}) {
   async function handle(req, res) {
     const url = new URL(req.url, 'http://local');
     const path = url.pathname;
+    const P = await ready;
 
     if (req.method === 'GET' && path === '/app.css') return send(res, 200, APP_CSS, 'text/css; charset=utf-8');
     if (req.method === 'GET' && path === '/healthz') return send(res, 200, 'ok');
     if (req.method === 'GET' && path === '/favicon.ico') return send(res, 204, '');
     if (req.method === 'GET' && path === '/login.js') return send(res, 200, LOGIN_JS, 'text/javascript; charset=utf-8');
-    if (req.method === 'GET' && VENDOR[path]) {
-      return send(res, 200, vendorAsset(path), VENDOR[path].type, { 'Cache-Control': 'public, max-age=86400' });
+    const vendor = VENDOR[path] || P.vendor[path];
+    if (req.method === 'GET' && vendor) {
+      return send(res, 200, vendorAsset(path, vendor), vendor.type, { 'Cache-Control': 'public, max-age=86400' });
     }
 
     if (path === '/login') {
@@ -198,9 +228,19 @@ export function createDashboard({ password, log = console.log } = {}) {
       sessions.delete(sid);
       return json(res, 200, { ok: true }, { 'Set-Cookie': cookie('', 0) });
     }
-    if (req.method === 'GET' && path === '/') return send(res, 200, APP_HTML, 'text/html; charset=utf-8');
+    if (req.method === 'GET' && path === '/') return send(res, 200, P.html, 'text/html; charset=utf-8');
     if (req.method === 'GET' && path === '/app.js') return send(res, 200, APP_JS, 'text/javascript; charset=utf-8');
-    if (req.method === 'GET' && path === '/api/tunnels') return json(res, 200, await collect(loadConfig()));
+    if (req.method === 'GET' && path === '/panels.js') return send(res, 200, P.js, 'text/javascript; charset=utf-8');
+    if (req.method === 'GET' && path === '/panels.css') return send(res, 200, P.css, 'text/css; charset=utf-8');
+    if (req.method === 'GET' && path === '/api/tunnels') {
+      const data = await collect(loadConfig());
+      const ctx = panelCtx(req, res, url);
+      for (const p of P.list) {
+        if (!p.enrich) continue;
+        try { await p.enrich(data.projects, ctx); } catch (e) { log(`error: panel ${p.id}: ${e.message}`); }
+      }
+      return json(res, 200, data);
+    }
 
     let m = path.match(/^\/api\/logs\/([^/]+)$/);
     if (req.method === 'GET' && m) {
@@ -225,6 +265,9 @@ export function createDashboard({ password, log = console.log } = {}) {
         invalidateCloudflare();
         return json(res, r.ok ? 200 : 500, r);
       } finally { busy.delete(project); }
+    }
+    for (const p of P.list) {
+      if (p.route && (await p.route(panelCtx(req, res, url)))) return;
     }
     return json(res, 404, { error: 'not found' });
   }

@@ -1,11 +1,15 @@
 // Dashboard UI: Pico CSS for styling, Alpine.js (CSP build, no unsafe-eval)
 // for state. Both are vendored from node_modules and served by the server.
+// Optional features ("panels", see ./panels/README.md) add HTML at the ${s('...')} slots.
+import { slot } from './panels.js';
+
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-const head = (title, scripts) => `<!doctype html>
+const head = (title, scripts, styles = []) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark"><title>${title}</title>
 <link rel="stylesheet" href="/vendor/pico.min.css"><link rel="stylesheet" href="/app.css">
+${styles.map((s) => `<link rel="stylesheet" href="${s}">`).join('')}
 ${scripts.map((s) => `<script defer src="${s}"></script>`).join('')}
 <script defer src="/vendor/alpine.min.js"></script></head>`;
 
@@ -21,11 +25,14 @@ export const LOGIN_HTML = (message) => `${head('burrow · sign in', ['/login.js'
   </form>
 </article></main></body></html>`;
 
-export const APP_HTML = `${head('burrow', ['/app.js'])}
+export const renderApp = (panels = []) => {
+  const s = (name) => slot(panels, name);
+  return `${head('burrow', ['/app.js', '/panels.js'], ['/panels.css'])}
 <body x-data="dashboard">
 <header class="container-fluid wide"><nav>
   <ul><li><strong>burrow</strong></li><li><small :class="cfClass" x-text="cfText"></small></li></ul>
   <ul>
+    ${s('toolbar')}
     <li><button class="secondary outline" @click="load">Refresh</button></li>
     <li><button class="contrast outline" @click="logout">Sign out</button></li>
   </ul>
@@ -37,21 +44,24 @@ export const APP_HTML = `${head('burrow', ['/app.js'])}
 
   <div class="overflow-auto" x-show="hasProjects">
   <table class="striped">
-    <thead><tr><th>Project</th><th>Hostnames</th><th>Local</th><th>Connector</th><th>Uptime</th><th></th></tr></thead>
+    <thead><tr>${s('headLead')}<th>Project</th><th>Hostnames</th><th>Local</th><th>Connector</th><th>Uptime</th>${s('headCols')}<th></th></tr></thead>
     <tbody>
     <template x-for="p in projects" :key="p.project">
       <tr>
-        <td><strong x-text="p.project"></strong> <span class="badge" x-show="p.builtIn">dashboard</span></td>
+        ${s('rowLead')}
+        <td><strong x-text="p.project"></strong> <span class="badge" x-show="p.builtIn">dashboard</span>${s('rowBadges')}</td>
         <td>
           <template x-for="h in p.hostnames" :key="h">
-            <div><a :href="hostUrl(h)" target="_blank" rel="noopener noreferrer" x-text="h"></a></div>
+            <div class="host"><a :href="hostUrl(h)" target="_blank" rel="noopener noreferrer" x-text="h"></a>${s('hostExtras')}</div>
           </template>
           <small x-show="noHosts(p)">none</small>
         </td>
-        <td><span class="badge" :class="localClass(p)" x-text="localText(p)"></span><br><small x-text="pidText(p)"></small></td>
+        <td><span class="badge" :class="localClass(p)" x-text="localText(p)"></span><br><small x-text="pidText(p)"></small>${s('localExtras')}</td>
         <td><span class="badge" :class="connClass(p)" x-text="connStatus(p)"></span><br><small x-text="connInfo(p)"></small></td>
         <td x-text="uptime(p)"></td>
+        ${s('rowCols')}
         <td><div class="actions">
+          ${s('rowActions')}
           <button class="secondary outline" @click="openLogs(p)">Logs</button>
           <button :disabled="upDisabled(p)" :title="upTitle(p)" :aria-busy="isBusy(p)" @click="act(p, 'up')">Up</button>
           <button class="secondary" :disabled="downDisabled(p)" :title="downTitle(p)" @click="act(p, 'down')">Down</button>
@@ -73,6 +83,7 @@ export const APP_HTML = `${head('burrow', ['/app.js'])}
     </header>
     <pre x-ref="logbody" x-text="logText"></pre>
   </article>
+  ${s('sections')}
 </main>
 
 <dialog :open="destroyOpen">
@@ -88,8 +99,11 @@ export const APP_HTML = `${head('burrow', ['/app.js'])}
   </article>
 </dialog>
 
+${s('dialogs')}
 <article class="toast" x-show="toastOpen" :class="toastClass" @click="hideToast"><pre x-text="toastText"></pre></article>
 </body></html>`;
+};
+export const APP_HTML = renderApp([]);
 
 export const APP_CSS = `
 .login{min-height:100vh;display:grid;place-items:center}.login article{width:min(360px,100%)}
@@ -113,6 +127,7 @@ td small{color:var(--pico-muted-color)}
 .toast{position:fixed;right:1rem;bottom:1rem;max-width:min(560px,calc(100% - 2rem));margin:0;cursor:pointer;z-index:10}
 .toast pre{margin:0;max-height:40vh;overflow:auto;font-size:.78rem;white-space:pre-wrap;background:transparent;padding:0}
 .toast.ok{border-left:4px solid #1f9d55}.toast.bad{border-left:4px solid #dc2626}
+.host{display:flex;align-items:center;gap:.35rem}
 `;
 
 export const LOGIN_JS = `
@@ -153,11 +168,35 @@ function post(url, body) {
   return fetch(url, { method: 'POST', headers: { 'X-Burrow': '1', 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined });
 }
+// GET JSON; a 401 sends the browser back to the login page.
+async function getJson(url) {
+  var r = await fetch(url);
+  if (r.status === 401) { location.assign('/login'); throw new Error('login required'); }
+  var j = await r.json().catch(function () { return {}; });
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
 var MAX_LOG_LINES = 3000;
+
+// Panels (/panels.js) register mixins here before Alpine starts.
+var BURROW_PANELS = [];
+function burrowPanel(factory) { BURROW_PANELS.push(factory); }
+function mergePanels(base, hooks) {
+  BURROW_PANELS.forEach(function (factory) {
+    var mixin = factory();
+    Object.keys(Object.getOwnPropertyDescriptors(mixin)).forEach(function (k) {
+      var d = Object.getOwnPropertyDescriptor(mixin, k);
+      if (k === 'init' || k === 'onLoad') { hooks[k].push(d.value); return; }
+      Object.defineProperty(base, k, d);
+    });
+  });
+  return base;
+}
 
 document.addEventListener('alpine:init', function () {
   Alpine.data('dashboard', function () {
-    return {
+    var hooks = { init: [], onLoad: [] };
+    return mergePanels({
       projects: [], loading: true, now: Date.now(), cf: { error: null }, busy: {},
       logOpen: false, logProject: '', logLines: [], follow: true, es: null,
       destroyOpen: false, destroyName: '', confirmText: '',
@@ -167,6 +206,7 @@ document.addEventListener('alpine:init', function () {
         var self = this;
         this.load();
         this.timer = setInterval(function () { self.load(); }, 5000);
+        hooks.init.forEach(function (f) { f.call(self); });
       },
       load: async function () {
         try {
@@ -174,6 +214,8 @@ document.addEventListener('alpine:init', function () {
           if (r.status === 401) { location.assign('/login'); return; }
           var data = await r.json();
           this.projects = data.projects; this.cf = data.cloudflare; this.now = data.now;
+          var self = this;
+          hooks.onLoad.forEach(function (f) { try { f.call(self, data); } catch (e) { console.error(e); } });
         } catch (e) {
           this.cf = { error: 'dashboard unreachable' };
         } finally { this.loading = false; }
@@ -271,7 +313,7 @@ document.addEventListener('alpine:init', function () {
       closeLogs: function () { if (this.es) this.es.close(); this.es = null; this.logOpen = false; },
 
       logout: async function () { await post('/logout'); location.assign('/login'); },
-    };
+    }, hooks);
   });
 });
 `;

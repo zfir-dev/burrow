@@ -210,8 +210,86 @@ Security:
   locally. Open it over HTTPS (or `http://localhost`), because the Secure cookie isn't sent over
   plain HTTP to other hosts.
 
+### Panels
+
+Dashboard features beyond the tunnel table are **panels**: one file each in
+`src/dashboard/panels/`, loaded at start-up. A panel can add HTML at fixed slots (toolbar,
+table cells, row buttons, sections, dialogs), an Alpine mixin, CSS, vendored files, API routes
+and extra fields on `/api/tunnels`. Panel routes run only after the session check, and their
+POSTs need the same `X-Burrow: 1` header, so every feature gets the same login, cookie and CSRF
+protection. Commands the dashboard runs get `BURROW_SOURCE=dashboard` in their environment.
+See [`src/dashboard/panels/README.md`](src/dashboard/panels/README.md) for the interface.
+
+### Add and edit projects
+
+_Not merged yet (`feature/ui-project-form`)._
+
+### Local port health
+
+_Not merged yet (`feature/ui-health`)._
+
+### Request stats
+
+_Not merged yet (`feature/ui-stats`)._
+
+### Logs
+
+_Not merged yet (`feature/ui-logs`)._
+
+### Quick actions
+
+_Not merged yet (`feature/ui-quick-actions`)._
+
+### Event history
+
+_Not merged yet (`feature/ui-history`)._
+
+### Alerts
+
+_Not merged yet (`feature/ui-alerts`)._
+
+### Cleanup
+
+_Not merged yet (`feature/ui-cleanup`)._
+
+### Bulk actions and auto-start
+
+_Not merged yet (`feature/ui-bulk`)._
+
 Server state lives in `~/.local/state/burrow/dashboard/server.{pid,log}`. A bare
 `burrow down` also stops the dashboard's tunnel connector, so run `burrow dashboard up` to bring it back.
+
+### Live updates
+
+_Not merged yet (`feature/ui-live`)._
+
+### Shares
+
+_Not merged yet (`feature/ui-shares`)._
+
+### Cloudflare Access
+
+_Not merged yet (`feature/ui-access`)._
+
+### Doctor
+
+_Not merged yet (`feature/ui-doctor`)._
+
+### Uptime timeline
+
+_Not merged yet (`feature/ui-uptime`)._
+
+### Sessions and two-factor sign-in
+
+_Not merged yet (`feature/ui-sessions`)._
+
+### Backup and restore
+
+_Not merged yet (`feature/ui-backup`)._
+
+### Hooks and updates
+
+_Not merged yet (`feature/ui-hooks-updates`)._
 
 ## Tests
 
