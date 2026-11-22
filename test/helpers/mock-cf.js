@@ -2,7 +2,9 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
-export async function mockCloudflare({ zone = { id: 'zone-1', name: 'example.dev' } } = {}) {
+// `zones` replaces the default single zone. `routes` handles extra endpoints first:
+// return true from it when it answered (ctx has ok, fail, send, state, p, q, body).
+export async function mockCloudflare({ zone = { id: 'zone-1', name: 'example.dev' }, zones, routes } = {}) {
   const state = { tunnels: [], records: [], configs: {}, calls: [] };
   const server = createServer(async (req, res) => {
     const u = new URL(req.url, 'http://mock');
@@ -20,9 +22,14 @@ export async function mockCloudflare({ zone = { id: 'zone-1', name: 'example.dev
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, errors: [{ code: status, message }] }));
     };
+    const send = (status, obj) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(obj));
+    };
+    if (routes && (await routes({ method: req.method, p, q, body, ok, fail, send, state }))) return;
     let m;
     if (p === '/user/tokens/verify') return ok({ id: 'tok', status: 'active' });
-    if (p === '/zones') return ok([zone].filter((z) => !q.get('name') || z.name === q.get('name')));
+    if (p === '/zones') return ok((zones || [zone]).filter((z) => !q.get('name') || z.name === q.get('name')));
     if (/^\/accounts\/[^/]+\/cfd_tunnel$/.test(p)) {
       if (req.method === 'POST') {
         const t = { id: randomUUID(), name: body.name, status: 'inactive', connections: [], created_at: new Date().toISOString() };
