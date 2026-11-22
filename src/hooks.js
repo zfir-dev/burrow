@@ -63,7 +63,9 @@ export function hookContext(proj, file, hosts, extra = {}) {
 // The same, for down: from the file remembered by the last `burrow up`.
 export function downContext(project, fileOpt) {
   const meta = readMeta(project);
-  const file = fileOpt ? resolve(fileOpt) : meta?.file;
+  // A share made with -f/--project keeps that tunnel.yml as projectFile (not file, so it
+  // never looks `burrow up`-able); its hooks run on down too, unless it was shared --no-hooks.
+  const file = fileOpt ? resolve(fileOpt) : meta?.file || (meta?.share && meta.hooks !== false ? meta.projectFile : undefined);
   const hostnames = meta?.hostnames || [];
   return { project, file, hostnames, url: hostnames[0] ? `https://${hostnames[0]}` : '', extra: {} };
 }
