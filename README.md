@@ -367,6 +367,8 @@ DNS records are checked in every zone burrow knows about: `BURROW_DOMAIN`'s, the
 projects with their own [`domain:`](docs/domains.md), and zones cached from earlier runs. The
 page lists the zones it checked; a zone whose DNS can't be read (for example a domain since
 removed from the account) is shown as **not scanned** and skipped, and the rest still works.
+That includes `BURROW_DOMAIN`'s own zone: if it can't be found, the scan and deletes still run
+for the other zones, and the default domain appears as **not scanned** with the reason.
 
 If a project is destroyed (or deleted from the dashboard) while one of those zones can't be
 read, the tunnel is still deleted and its DNS deletion is queued in
