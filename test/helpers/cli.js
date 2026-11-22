@@ -42,10 +42,16 @@ export function sandbox({ api, domain = 'example.dev', extra = {} } = {}) {
       const child = start(args, opts);
       let stdout = '';
       let stderr = '';
+      // Hard limit, so a stuck CLI can never hang the test run.
+      const limit = opts.timeout || 60000;
+      const timer = setTimeout(() => {
+        stderr += `\n[test helper] killed after ${limit} ms`;
+        child.kill('SIGKILL');
+      }, limit);
       child.stdout.on('data', (d) => { stdout += d; });
       child.stderr.on('data', (d) => { stderr += d; });
       child.stdin.end(opts.input ?? '');
-      child.on('close', (code) => resolve({ code, stdout, stderr }));
+      child.on('close', (code) => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
     });
   const cleanup = async () => {
     await run(['down']).catch(() => {});
