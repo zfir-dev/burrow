@@ -66,10 +66,17 @@ Hooks are `/bin/sh` command lines. Doctor reads them with a small shell-word par
 - `cd <dir>` is followed: the directory must exist, and later commands are checked there
   (`cd web && ./start.sh` looks for `web/start.sh`).
 - `npm run <x>`, `npm start|test|stop|restart`, `yarn [run] <x>` and `pnpm [run] <x>` also need
-  script `<x>` in that directory's `package.json` (`npm start` is fine with a `server.js`).
+  script `<x>` in that directory's `package.json`. `npm start` with no `start` script but a
+  `server.js` is npm's default (`node server.js`): it passes, with a *note* saying so.
+- Compound commands are read, not skipped: the commands inside `$(…)`, backticks (also in
+  `"…"`), `( … )` subshells, `{ …; }` groups, `if`/`elif`/`else`, `while`/`until`/`for` loops
+  (conditions and bodies) and `case` arms are checked like any other. A `cd` inside a subshell
+  or `$(…)` stays there; each `then`/`else` body and `case` arm starts in the directory the block
+  began in; and after a block that `cd`s, later relative paths are *not checked* (it depends on
+  which branch ran). Here-document bodies are skipped.
 - What can't be known without running it is listed as *not checked* instead of being
-  guessed: `$(…)` and backticks, a command or `cd` target that is a `$VARIABLE`, subshells,
-  `{ …; }` groups, here-documents and `if`/`for`/`while`/`case` blocks.
+  guessed: a command or `cd` target that is a `$VARIABLE` or `$(…)` output, function
+  definitions, and anything unterminated.
 
 A problem is a warning (`!`), not a failure: PATH can differ when the hook really runs.
 
