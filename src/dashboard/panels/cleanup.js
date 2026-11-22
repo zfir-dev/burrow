@@ -212,7 +212,7 @@ burrowPanel(function () {
         var r = await post('/api/cleanup/pending/retry', {});
         if (r.status === 401) { location.assign('/login'); return; }
         var j = await r.json().catch(function () { return {}; });
-        this.showToast((j.ok ? '✓ queued DNS cleanup\n' : '✗ queued DNS cleanup\n') + (j.output || j.error || ''), !!j.ok, 12000);
+        this.showToast((j.ok ? '✓ queued DNS cleanup\\n' : '✗ queued DNS cleanup\\n') + (j.output || j.error || ''), !!j.ok, 12000);
       } catch (e) { this.showToast('✗ queued DNS cleanup: network error', false); } finally {
         this.pendingBusy = false; this.scanCleanup(); this.load();
       }
