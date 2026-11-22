@@ -210,7 +210,8 @@ The table stays within the window with every panel merged: each row shows **Logs
 **Down**, and the rest (**Destroy…** and panel actions such as Edit, Stats and Restart) are in
 the row's **⋯** menu. Long hostnames are shortened with an ellipsis (hover for the full name), the
 Uptime column is hidden below 1240 px, and below 1180 px each project becomes a card, so it also
-works on a phone.
+works on a phone. In card view, cells without an obvious meaning carry a small label (**Boot** in
+front of the start-at-boot switch, **up** in front of the uptime).
 
 ### Add and edit projects
 
