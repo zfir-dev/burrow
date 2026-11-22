@@ -7,6 +7,7 @@ import { loadConfig } from '../config.js';
 import { assertLabel } from '../naming.js';
 import { logFile } from '../process.js';
 import { collect, invalidateCloudflare } from './data.js';
+import { readTail, combinedText, downloadName, streamAll } from './logs.js';
 import {
   passwordMatches, sessionKey, signSession, verifySession, RateLimiter, parseCookies, newSecret, MIN_PASSWORD_LENGTH,
 } from './auth.js';
@@ -203,6 +204,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       if (!passwordMatches(given, password)) {
         limiter.fail(ip);
         log(`login failed from ${ip}`);
+        events.emit('event', { action: 'sign-in', ok: false, detail: `wrong password from ${ip}` });
         if (wantsJson) return json(res, 401, { error: 'Wrong password.' });
         return send(res, 401, LOGIN_HTML('Wrong password.'), 'text/html; charset=utf-8');
       }
@@ -210,6 +212,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       const s = signSession(key, SESSION_TTL);
       sessions.set(s.id, s.exp);
       log(`login ok from ${ip}`);
+      events.emit('event', { action: 'sign-in', detail: `from ${ip}` });
       if (wantsJson) return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(s.value, SESSION_TTL / 1000) });
       return send(res, 303, '', 'text/plain', { Location: '/', 'Set-Cookie': cookie(s.value, SESSION_TTL / 1000) });
     }
@@ -226,6 +229,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
 
     if (req.method === 'POST' && path === '/logout') {
       sessions.delete(sid);
+      events.emit('event', { action: 'sign-out', detail: `from ${clientIp(req)}` });
       return json(res, 200, { ok: true }, { 'Set-Cookie': cookie('', 0) });
     }
     if (req.method === 'GET' && path === '/') return send(res, 200, P.html, 'text/html; charset=utf-8');
@@ -246,6 +250,18 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
     if (req.method === 'GET' && m) {
       try { assertLabel(m[1], 'project'); } catch { return json(res, 400, { error: 'bad project' }); }
       return streamLog(req, res, m[1]);
+    }
+    if (req.method === 'GET' && path === '/api/logs-all') return streamAll(req, res, SECURITY_HEADERS);
+    if (req.method === 'GET' && path === '/api/logs-all/download') {
+      return send(res, 200, combinedText(), 'text/plain; charset=utf-8',
+        { 'Content-Disposition': `attachment; filename="${downloadName('all')}"` });
+    }
+    m = path.match(/^\/api\/logs\/([^/]+)\/download$/);
+    if (req.method === 'GET' && m) {
+      try { assertLabel(m[1], 'project'); } catch { return json(res, 400, { error: 'bad project' }); }
+      if (!existsSync(logFile(m[1]))) return json(res, 404, { error: 'no log yet' });
+      return send(res, 200, readTail(logFile(m[1]), 10 * 1024 * 1024), 'text/plain; charset=utf-8',
+        { 'Content-Disposition': `attachment; filename="${downloadName(m[1])}"` });
     }
 
     m = path.match(/^\/api\/tunnels\/([^/]+)\/(up|down|destroy)$/);

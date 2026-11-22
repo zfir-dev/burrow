@@ -56,7 +56,9 @@ versions. The systemd unit (if you use one) records the Node binary path when it
 2. Create an API token at **My Profile > API Tokens > Create Token > Custom token**:
    - **Account > Cloudflare Tunnel > Edit**
    - **Zone > DNS > Edit**, limited to the tunnel domain's zone
+   - optional **Zone > Analytics > Read**, only for `burrow stats`
    - optional **Zone > Zone > Read**, only if you leave `CF_ZONE_ID` empty (used to look up the zone ID)
+   - optional **Account > Access: Apps and Policies > Edit**, only for services with `private: true`
 3. Run `burrow init`. It writes `~/.config/burrow/config.env` (mode 600):
 
    ```env
@@ -102,7 +104,13 @@ services:
   A value that starts with `^` is used as a raw regex.
 - `originRequest` (on a service or a path) is passed through to cloudflared, e.g.
   `originRequest: { noTLSVerify: true }`.
+- `private: true` on a service puts its hostname behind **Cloudflare Access** (login by email),
+  allowing `allow: [you@example.dev, "@example.dev"]` or `BURROW_ACCESS_EMAILS`. Services stay
+  public by default ([details](docs/access.md)).
 - burrow adds a final `http_status:404` rule.
+- `hooks:` runs shell commands in the project directory around `up` and `down` (`pre_up`, `post_up`,
+  `pre_down`, `post_down`), e.g. start `next dev` in the background before the tunnel comes up
+  ([details](docs/hooks.md)). `--no-hooks` skips them.
 - `autostart: true` makes `burrow service` bring the project up at boot ([details](docs/service.md)).
 
 See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
@@ -112,11 +120,13 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | Command                          | What it does |
 | -------------------------------- | ------------ |
 | `burrow init`                    | Write the config template, or verify the token and access |
+| `burrow update`                  | Update burrow itself: a git checkout gets `git pull --ff-only` + `npm install`, a global npm install is reinstalled from its git source; `--check` only reports newer commits ([details](docs/update.md)) |
 | `burrow add [project]`           | Create a `tunnel.yml` by answering prompts, or non-interactively with `--app`, `--path`, `--service` ([details](docs/add.md)) |
 | `burrow up [project]`            | Create or reuse tunnel `burrow-<project>`, PUT its ingress config, upsert the CNAMEs (and remove stale ones tagged for this project), then (re)start `cloudflared` in the background |
+| `burrow edit [project]`          | Open `tunnel.yml` in `$EDITOR` (or `vi`/`nano`), validate it on save (a broken edit never replaces the file), and offer to re-run `up` if the project is running; `--yes`, `--no-apply` ([details](docs/edit.md)) |
 | `burrow share <port>`            | Share a local port on a temporary `<random>.<domain>` hostname; Ctrl+C, `burrow down` or `burrow destroy` removes it ([details](docs/share.md)) |
 | `burrow down [project]`          | Stop that project's `cloudflared` only. The tunnel and DNS records are kept, so the next `up` is quick |
-| `burrow restart [project]`       | Re-sync the tunnel config and DNS and restart `cloudflared` (same as `up`, which reuses the tunnel). With no project, restarts every connector that is running now; `--dry-run` shows the plan |
+| `burrow restart [project]`       | Re-sync the tunnel config and DNS and restart `cloudflared` (same as `up`, which reuses the tunnel). With no project, restarts every connector that is running now; `--dry-run` shows the plan. Detached shares are restarted on the same hostname, shares still attached to a `burrow share` in the foreground are skipped ([details](docs/share.md#restart-completion-and-export)) |
 | `burrow down`                    | Stop **every** running burrow connector (each pid in `~/.local/state/burrow/`) |
 | `burrow export [file]` / `burrow import <file>` | Export remembered project configs to YAML/JSON (tunnel.yml fields only, never tokens or passwords) and import them on another machine ([details](docs/export-import.md)) |
 | `burrow destroy [project]`       | Stop `cloudflared`, delete DNS records tagged `burrow:<project>`, delete the tunnel's connections and the tunnel. `burrow down <project> --purge` does the same |
@@ -132,7 +142,9 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | `burrow dashboard status`        | Server, connector, URL, whether a password is set |
 | `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state (`--json` for a machine-readable array) |
 | `burrow status [project]`        | Local process, tunnel health, DNS records (`--json` for an object with `running`, `pid`, `tunnel`, `records`) |
+| `burrow stats [project]`         | Requests, bandwidth and 2xx/3xx/4xx/5xx counts per hostname from Cloudflare's GraphQL Analytics (`--since 24h`, `--json`). Needs **Zone > Analytics > Read** ([details](docs/stats.md)) |
 | `burrow logs [project]`          | Show the cloudflared log (`-n 200`, `--follow`) |
+| `burrow watch [projects...]`     | Check connectors, tunnel health and local service ports every `--interval` seconds and alert on changes through `BURROW_ALERT_WEBHOOK` (JSON; Slack/Discord-compatible) and/or `BURROW_ALERT_NTFY`; `--debounce`, `--once` for cron, `--install-service` for a systemd unit ([details](docs/alerts.md)) |
 
 `destroy` with no project and no `--all` refuses to run.
 
@@ -173,7 +185,7 @@ It shows every burrow project with:
 - local cloudflared state (running/stopped, pid, uptime)
 - connector status from the Cloudflare API (healthy/degraded/down, connections, colos)
 - a live log viewer that streams `~/.local/state/burrow/<project>.log` over SSE
-- **Up** / **Down** / **Destroy** buttons. **Destroy** opens a dialog and stays disabled until you type the project name.
+- **Up** / **Down** buttons and **Destroy…** (in the row's **⋯** menu). **Destroy** opens a dialog and stays disabled until you type the project name.
   The dashboard's own project can't be stopped from the UI.
 
 | Sign in | Live logs |
@@ -207,6 +219,12 @@ and extra fields on `/api/tunnels`. Panel routes run only after the session chec
 POSTs need the same `X-Burrow: 1` header, so every feature gets the same login, cookie and CSRF
 protection. Commands the dashboard runs get `BURROW_SOURCE=dashboard` in their environment.
 See [`src/dashboard/panels/README.md`](src/dashboard/panels/README.md) for the interface.
+
+The table stays within the window with every panel merged: each row shows **Logs**, **Up** and
+**Down**, and the rest (**Destroy…** and panel actions such as Edit, Stats and Restart) are in
+the row's **⋯** menu. Long hostnames are shortened with an ellipsis (hover for the full name), the
+Uptime column is hidden below 1240 px, and below 1180 px each project becomes a card, so it also
+works on a phone.
 
 ### Add and edit projects
 
@@ -254,15 +272,54 @@ _Not merged yet (`feature/ui-stats`)._
 
 ### Logs
 
-_Not merged yet (`feature/ui-logs`)._
+The log viewer (**Logs** on a row, or **All logs** in the top bar for every tunnel at once):
+
+- **Search** filters lines as you type (in the combined view it matches project names too).
+- **Level** filter: all, info and up, warnings and errors, or errors only. Levels come from
+  cloudflared's `DBG/INF/WRN/ERR` (and `level=…`); warnings and errors are coloured.
+- **All logs** interleaves every `~/.local/state/burrow/*.log` by timestamp, tags each line with
+  its project, and picks up projects that start logging later.
+- **Download** saves the log as a file: the last 10 MB of one project, or the last 2 MB of each
+  project merged into one file for **All logs**.
+
+The viewer keeps the newest 3000 lines in the browser.
 
 ### Quick actions
 
-_Not merged yet (`feature/ui-quick-actions`)._
+Next to every hostname (hover to highlight) are three small icons: **copy** copies the URL, **open** (arrow out of a box) opens it in a new tab,
+and **QR** shows a QR code to open it on a phone. The icons are inline SVG, so they look the same on every system and need no icon font. **Restart** on a row re-syncs `tunnel.yml` and
+restarts cloudflared, like `burrow restart <project>` (not for the dashboard's own project).
+
+The QR code is drawn in the browser by [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator)
+(MIT, pinned to 2.0.4), served from `node_modules` at `/vendor/qrcode.js` and loaded the first time
+you open a QR code, so it works offline and needs no CSP change (the image is a `data:` URL).
+Copying uses the Clipboard API on HTTPS or localhost and falls back to a selection copy.
 
 ### Event history
 
-_Not merged yet (`feature/ui-history`)._
+**History** in the top bar lists what changed and when: `up`, `down`, `destroy`, `restart`,
+`share`, `prune`, `add`, `edit`, `import`, `autostart`, `service install|uninstall`,
+`dashboard up|down` and `update`, with the project, the result (ok/failed), how long it took and
+where it came from:
+
+- `cli`: you ran it in a shell
+- `dashboard`: a button in the dashboard (the dashboard runs the CLI with `BURROW_SOURCE=dashboard`),
+  or a dashboard-only action such as saving a `tunnel.yml` from the form
+- `boot`: `burrow autostart` from the systemd unit
+
+Dashboard **sign-in** (ok or wrong password, with the client IP) and **sign-out** are recorded
+too, as `dashboard` events; the password never is. Attempts refused by the rate limit aren't.
+
+A run that is cut short still leaves an entry, marked failed unless it exited with code 0:
+`stopped by SIGINT` (Ctrl+C), `stopped by SIGTERM` / `SIGHUP`, or `exited before finishing`
+when a command calls `process.exit()`. The exit code stays what it was (130 for Ctrl+C,
+143 for SIGTERM), and a command with its own Ctrl+C cleanup (such as `share`) still runs it.
+Only `kill -9` (SIGKILL) can't be caught and leaves no entry.
+
+Filter by project or source. Read-only commands (`ls`, `status`, `logs`, `stats`, …) and
+`--dry-run` aren't recorded. Events are JSON Lines in `~/.local/state/burrow/history/events.jsonl`
+(mode 600, no secrets); past 1 MB the file is cut to the newest 2000 events. Recording is best
+effort and never makes a command fail.
 
 ### Alerts
 
@@ -274,10 +331,48 @@ _Not merged yet (`feature/ui-cleanup`)._
 
 ### Bulk actions and auto-start
 
-_Not merged yet (`feature/ui-bulk`)._
+Tick the checkboxes in front of projects (or the header box for all of them) and use **Start** / **Stop** in the toolbar. Projects run one after another, each with the same busy lock as the row buttons; the result lists every project and the call returns `207` when some failed. The built-in `burrow` project can't be picked.
+
+The **Boot** switch sets `autostart: true` in the project's tunnel file (comments and other keys are kept). Projects listed in `BURROW_AUTOSTART` show a locked switch: change those in `~/.config/burrow/config.env`. Projects without a tunnel file can't be toggled.
+
+The bar under the table shows the `burrow.service` systemd unit and which projects it brings up. **Install** runs `burrow service install --now`; **Uninstall** asks first, because systemd runs `burrow down` when it stops the unit (every connector stops, tunnels and DNS are kept).
+
+Endpoints: `POST /api/bulk {action: up|down|restart, projects: [...]}` (at most 50), `POST /api/autostart/:project {enabled}`, `GET /api/boot`, `POST /api/boot {action: install|uninstall, confirm}`.
 
 Server state lives in `~/.local/state/burrow/dashboard/server.{pid,log}`. A bare
 `burrow down` also stops the dashboard's tunnel connector, so run `burrow dashboard up` to bring it back.
+
+### Live updates
+
+_Not merged yet (`feature/ui-live`)._
+
+### Shares
+
+_Not merged yet (`feature/ui-shares`)._
+
+### Cloudflare Access
+
+_Not merged yet (`feature/ui-access`)._
+
+### Doctor
+
+_Not merged yet (`feature/ui-doctor`)._
+
+### Uptime timeline
+
+_Not merged yet (`feature/ui-uptime`)._
+
+### Sessions and two-factor sign-in
+
+_Not merged yet (`feature/ui-sessions`)._
+
+### Backup and restore
+
+_Not merged yet (`feature/ui-backup`)._
+
+### Hooks and updates
+
+_Not merged yet (`feature/ui-hooks-updates`)._
 
 ## Tests
 
