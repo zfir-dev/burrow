@@ -33,6 +33,7 @@ const wrap = (fn) => async (...args) => {
 program.command('update')
   .description('update burrow from GitHub (git checkout: git pull --ff-only + npm install; global install: npm i -g)')
   .option('--check', 'only report whether a newer commit or version exists')
+  .option('--json', 'with --check: print one JSON object (for the dashboard)')
   .option('--dry-run', 'print what would run')
   .option('--force', 'global install: reinstall even when up to date')
   .action(wrap(async (o) => (await import('../src/update.js')).update(o)));
