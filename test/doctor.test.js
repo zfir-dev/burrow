@@ -108,7 +108,7 @@ test('hookCommandFound', () => {
   // Shell syntax is parsed now (details in shell-words.test.js), not skipped.
   assert.equal(hookCommandFound('FOO=1 sh -c true', dir).ok, true);
   assert.deepEqual(hookCommandFound('cd no-such-dir && sh -c true', dir).problems, [`cd no-such-dir: no such directory in ${dir}`]);
-  assert.match(hookCommandFound('node $(which x)', dir).detail, /not checked: command substitution/);
+  assert.deepEqual(hookCommandFound('sh -c "$(no-such-command-for-burrow)"', dir, '/usr/bin:/bin').problems, ['no-such-command-for-burrow not found on PATH']);
 });
 
 test('doctor: checks the project domain: zone and its hooks', async () => {
