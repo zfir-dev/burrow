@@ -21,6 +21,21 @@ test('the vendored QR library makes a data URL (no eval, works offline)', () => 
   assert.match(q.createDataURL(6, 2), /^data:image\/gif;base64,/);
 });
 
+test('host icons are inline SVG, not font glyphs', async () => {
+  const { html, ICONS } = await import('../src/dashboard/panels/quick-actions.js');
+  assert.doesNotMatch(html.hostExtras, /[⧉↗▦]/);
+  assert.equal((html.hostExtras.match(/<svg /g) || []).length, 3);
+  for (const svg of Object.values(ICONS)) {
+    assert.match(svg, /^<svg [^>]*aria-hidden="true"[^>]*>[\s\S]*<\/svg>$/);
+    assert.doesNotMatch(svg, /style=|on[a-z]+=|<script/i, 'nothing the CSP would block');
+  }
+  const d = await startDashboard();
+  try {
+    const page = await (await d.get('/')).text();
+    assert.ok(page.includes(ICONS.copy), 'copy icon is rendered into the page');
+  } finally { await d.close(); }
+});
+
 test('HTTP: QR script is served; restart needs a session, CSRF header and a real project', async () => {
   const d = await startDashboard();
   try {
