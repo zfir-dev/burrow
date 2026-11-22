@@ -108,6 +108,9 @@ services:
   allowing `allow: [you@example.dev, "@example.dev"]` or `BURROW_ACCESS_EMAILS`. Services stay
   public by default ([details](docs/access.md)).
 - burrow adds a final `http_status:404` rule.
+- `hooks:` runs shell commands in the project directory around `up` and `down` (`pre_up`, `post_up`,
+  `pre_down`, `post_down`), e.g. start `next dev` in the background before the tunnel comes up
+  ([details](docs/hooks.md)). `--no-hooks` skips them.
 - `autostart: true` makes `burrow service` bring the project up at boot ([details](docs/service.md)).
 
 See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
