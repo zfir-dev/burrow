@@ -23,3 +23,21 @@ Removed https://k3x9q2mf7a.example.dev
   `burrow destroy share-<label>` works too.
 - `--dry-run` prints the plan without calling Cloudflare.
 - Don't name your own projects `share-…`, so they can't be mistaken for shares.
+
+## Restart, completion and export
+
+- `burrow restart` (no project) restarts detached shares along with projects: it re-applies
+  the share's ingress, recreates its CNAME if it's missing, and starts cloudflared again on
+  the same tunnel and hostname. `burrow restart share-<label>` does that for one share.
+  - A share whose `burrow share` is still running in the foreground is **skipped**, because
+    that process owns it (and removes it on Ctrl+C). Once that process is gone, restart
+    adopts the share as a detached one.
+  - If the share's tunnel was deleted on Cloudflare, restart removes the local share state
+    and prints the `burrow share … --name <label>` command to create it again.
+- Shell completion offers share names for `down`, `destroy`, `restart`, `status` and `logs`,
+  and leaves them out for commands that need a `tunnel.yml` (`up`, `url`, `open`, …).
+  `burrow __complete targets` lists projects and shares, `burrow __complete shares` only shares.
+- `burrow export` never includes shares. When there are some, it prints a note on stderr
+  (and as a comment at the top of a YAML export). `burrow export --project share-<label>`
+  fails with an explanation.
+
