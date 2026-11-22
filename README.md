@@ -472,8 +472,11 @@ running. `GET /api/uptime?window=1h|24h|7d` returns
 when each signed in and when it was last active. Your own session is marked **this browser**.
 You can sign out one session, **Sign out other sessions**, or **Sign out everywhere** (asks
 first, and signs you out too). Sessions are listed by an opaque handle; session ids never leave
-the server. Sessions still last 12 hours, and restarting the dashboard or changing its password
-ends them all.
+the server. Sessions last 12 hours and survive a restart of `burrow dashboard`: the session
+list and its signing secret are kept in `~/.local/state/burrow/dashboard/sessions.json` (mode 600,
+no password in it). Expired sessions are dropped when it is loaded, signing out (one, others or
+everywhere) is saved at once, and changing the dashboard password still ends every session.
+Deleting `sessions.json` and restarting the dashboard ends them all too.
 
 **Two-factor sign-in** is optional and off by default. Turning it on makes sign-in ask for a
 6-digit code from an authenticator app (TOTP, SHA-1, 30 s; works with any common app):
