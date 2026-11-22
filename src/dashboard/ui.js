@@ -2,6 +2,7 @@
 // for state. Both are vendored from node_modules and served by the server.
 // Optional features ("panels", see ./panels/README.md) add HTML at the ${s('...')} slots.
 import { slot } from './panels.js';
+import { totpEnabled } from './totp.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -13,14 +14,16 @@ ${styles.map((s) => `<link rel="stylesheet" href="${s}">`).join('')}
 ${scripts.map((s) => `<script defer src="${s}"></script>`).join('')}
 <script defer src="/vendor/alpine.min.js"></script></head>`;
 
-export const LOGIN_HTML = (message) => `${head('burrow · sign in', ['/login.js'])}
+export const LOGIN_HTML = (message, twoFactor = totpEnabled()) => `${head('burrow · sign in', ['/login.js'])}
 <body><main class="container login">
 <article x-data="login" data-message="${esc(message)}">
   <hgroup><h1>burrow</h1><p>Tunnel dashboard</p></hgroup>
   <form method="post" action="/login" @submit.prevent="submit">
     <p class="error" x-show="hasError" x-text="error">${esc(message)}</p>
     <input type="password" name="password" x-model="password" placeholder="Password" aria-label="Password"
-      autocomplete="current-password" required autofocus>
+      autocomplete="current-password" required autofocus>${twoFactor ? `
+    <input type="text" name="code" x-model="code" placeholder="6-digit code" aria-label="Two-factor code"
+      inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" autocomplete="one-time-code" required>` : ''}
     <button type="submit" :aria-busy="busy" :disabled="busy">Sign in</button>
   </form>
 </article></main></body></html>`;
@@ -198,7 +201,7 @@ export const LOGIN_JS = `
 document.addEventListener('alpine:init', function () {
   Alpine.data('login', function () {
     return {
-      password: '', error: '', busy: false,
+      password: '', code: '', error: '', busy: false,
       init: function () { this.error = this.$el.dataset.message || ''; },
       get hasError() { return this.error.length > 0; },
       submit: async function () {
@@ -207,12 +210,13 @@ document.addEventListener('alpine:init', function () {
           var r = await fetch('/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-            body: new URLSearchParams({ password: this.password }),
+            body: new URLSearchParams({ password: this.password, code: this.code }),
           });
           var j = await r.json().catch(function () { return {}; });
           if (r.ok && j.ok) { location.assign('/'); return; }
           this.error = j.error || ('Sign in failed (' + r.status + ')');
-          this.password = '';
+          this.password = ''; this.code = '';
+          if (j.twoFactor && !document.querySelector('input[name=code]')) { location.reload(); return; }
         } catch (e) {
           this.error = 'Network error';
         } finally { this.busy = false; }

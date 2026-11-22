@@ -12,6 +12,7 @@ import {
   passwordMatches, sessionKey, signSession, verifySession, RateLimiter, parseCookies, newSecret, MIN_PASSWORD_LENGTH,
 } from './auth.js';
 import { LOGIN_HTML, renderApp, APP_CSS, APP_JS, LOGIN_JS } from './ui.js';
+import { totpEnabled, verifyCode } from './totp.js';
 import { loadPanels, sortPanels, panelJs, panelCss, panelVendor, events } from './panels.js';
 
 // Vendored front-end libraries, served from node_modules (no CDN, works offline).
@@ -140,6 +141,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
   }
   const key = sessionKey(newSecret(), password);
   const sessions = new Map(); // id -> exp (server-side, so logout really ends a session)
+  const sessionInfo = new Map(); // id -> { createdAt, lastSeen, ip, agent } (for the Sessions panel)
   const limiter = new RateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
   const busy = new Set();
   const ready = (panels ? Promise.resolve(sortPanels(panels)) : loadPanels()).then(buildPanels);
@@ -160,13 +162,24 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       const text = await readBody(req, limit);
       try { return text ? JSON.parse(text) : {}; } catch { return null; }
     },
+    // Signed-in sessions (ids never leave the server; panels see opaque handles).
+    sessions: {
+      current: () => authed(req) || null,
+      list: () => [...sessions].filter(([, exp]) => exp > Date.now()).map(([id, exp]) => ({ id, exp, ...(sessionInfo.get(id) || {}) })),
+      revoke: (id) => { sessionInfo.delete(id); return sessions.delete(id); },
+      clearCookie: () => cookie('', 0),
+    },
   });
 
   const authed = (req) => {
     const id = verifySession(key, parseCookies(req.headers.cookie)[COOKIE]);
     if (!id) return false;
     const exp = sessions.get(id);
-    if (!exp || exp < Date.now()) { sessions.delete(id); return false; }
+    if (!exp || exp < Date.now()) { sessions.delete(id); sessionInfo.delete(id); return false; }
+    const info = sessionInfo.get(id) || { createdAt: Date.now(), ip: clientIp(req), agent: String(req.headers['user-agent'] || '').slice(0, 200) };
+    info.lastSeen = Date.now();
+    info.ip = clientIp(req);
+    sessionInfo.set(id, info);
     return id;
   };
   const cookie = (value, maxAge) =>
@@ -200,13 +213,26 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
           'text/html; charset=utf-8', { 'Retry-After': String(lim.retryAfter) });
       }
       let given = '';
-      try { given = new URLSearchParams(await readBody(req)).get('password') || ''; } catch { return send(res, 413, 'Too large'); }
+      let code = '';
+      try {
+        const form = new URLSearchParams(await readBody(req));
+        given = form.get('password') || '';
+        code = form.get('code') || '';
+      } catch { return send(res, 413, 'Too large'); }
       if (!passwordMatches(given, password)) {
         limiter.fail(ip);
         log(`login failed from ${ip}`);
         events.emit('event', { action: 'sign-in', ok: false, detail: `wrong password from ${ip}` });
         if (wantsJson) return json(res, 401, { error: 'Wrong password.' });
         return send(res, 401, LOGIN_HTML('Wrong password.'), 'text/html; charset=utf-8');
+      }
+      // Optional second factor (see totp.js): counts against the same rate limit.
+      if (totpEnabled() && !verifyCode(code)) {
+        limiter.fail(ip);
+        log(`login failed from ${ip}: two-factor code`);
+        const msg = code ? 'Wrong two-factor code.' : 'Enter the code from your authenticator app.';
+        if (wantsJson) return json(res, 401, { error: msg, twoFactor: true });
+        return send(res, 401, LOGIN_HTML(msg), 'text/html; charset=utf-8');
       }
       limiter.reset(ip);
       const s = signSession(key, SESSION_TTL);

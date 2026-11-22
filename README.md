@@ -390,7 +390,38 @@ _Not merged yet (`feature/ui-uptime`)._
 
 ### Sessions and two-factor sign-in
 
-_Not merged yet (`feature/ui-sessions`)._
+**Sessions** in the toolbar lists the browsers signed in to the dashboard: browser and OS, IP,
+when each signed in and when it was last active. Your own session is marked **this browser**.
+You can sign out one session, **Sign out other sessions**, or **Sign out everywhere** (asks
+first, and signs you out too). Sessions are listed by an opaque handle; session ids never leave
+the server. Sessions still last 12 hours, and restarting the dashboard or changing its password
+ends them all.
+
+**Two-factor sign-in** is optional and off by default. Turning it on makes sign-in ask for a
+6-digit code from an authenticator app (TOTP, SHA-1, 30 s; works with any common app):
+
+1. Open **Sessions** and click **Set up two-factor sign-in**.
+2. Scan the QR code with your app, or type the key shown under it. The key is shown only during
+   setup. Once two-factor is on, the dashboard never shows or returns it again.
+3. Enter the app's current code and click **Turn on**. A wrong code changes nothing. Setup
+   expires after 15 minutes. **Sign out other sessions** is ticked by default.
+
+From then on, the sign-in page has a code field. Each code works once, and the server accepts
+the code before or after the current one, to allow for clock drift. Wrong codes count toward
+the same limit as wrong passwords (5 per 15 minutes per IP). **Turn off** asks first and needs
+a current code that hasn't been used yet. The key is stored in
+`~/.local/state/burrow/dashboard/totp.json` (mode 600). If you lose the phone, delete that file
+on the server to turn two-factor off ([details](docs/two-factor.md)).
+
+| Endpoint | Does |
+| --- | --- |
+| `GET /api/sessions` | `sessions: [{handle, current, createdAt, lastSeen, ip, agent}]`, `twoFactor: {enabled, pending}` |
+| `POST /api/sessions/revoke` | `{handle}` signs one session out |
+| `POST /api/sessions/revoke-others` | Signs out every other session |
+| `POST /api/sessions/revoke-all` | `{confirm: true}` signs out every session, this one included |
+| `POST /api/two-factor/setup` | Starts setup; the only response that ever carries the key |
+| `POST /api/two-factor/enable` | `{code, signOutOthers}` turns it on |
+| `POST /api/two-factor/disable` | `{code, confirm: true}` turns it off and deletes the key |
 
 ### Backup and restore
 
