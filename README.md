@@ -245,6 +245,38 @@ _Not merged yet (`feature/ui-bulk`)._
 Server state lives in `~/.local/state/burrow/dashboard/server.{pid,log}`. A bare
 `burrow down` also stops the dashboard's tunnel connector, so run `burrow dashboard up` to bring it back.
 
+### Live updates
+
+_Not merged yet (`feature/ui-live`)._
+
+### Shares
+
+_Not merged yet (`feature/ui-shares`)._
+
+### Cloudflare Access
+
+_Not merged yet (`feature/ui-access`)._
+
+### Doctor
+
+_Not merged yet (`feature/ui-doctor`)._
+
+### Uptime timeline
+
+_Not merged yet (`feature/ui-uptime`)._
+
+### Sessions and two-factor sign-in
+
+_Not merged yet (`feature/ui-sessions`)._
+
+### Backup and restore
+
+_Not merged yet (`feature/ui-backup`)._
+
+### Hooks and updates
+
+_Not merged yet (`feature/ui-hooks-updates`)._
+
 ## Tests
 
 `BURROW_CF_API_BASE` (environment only) points burrow at a mock Cloudflare API. It's used for
