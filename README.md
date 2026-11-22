@@ -96,6 +96,8 @@ services:
 ```
 
 - `project` and `name` must be lowercase DNS labels with no dots.
+- `domain: example.org` (optional) uses another Cloudflare zone on the same account for this project
+  instead of `BURROW_DOMAIN` ([details](docs/domains.md)).
 - `paths[].path` is a prefix. `/auth/v1` matches `/auth/v1` and everything below it.
   A value that starts with `^` is used as a raw regex.
 - `originRequest` (on a service or a path) is passed through to cloudflared, e.g.

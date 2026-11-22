@@ -4,6 +4,7 @@ import { loadConfig, requireConfig } from './config.js';
 import { assertLabel } from './naming.js';
 import { findProjectFile, loadProjectFile, hostnames, DASHBOARD_PROJECT, dashboardProject } from './project.js';
 import { readMeta } from './process.js';
+import { projectDomain } from './zones.js';
 
 // [{ service, url }] for a project: from its tunnel.yml (-f, ./tunnel.yml or the
 // remembered file), falling back to the hostnames saved by the last `burrow up`.
@@ -19,8 +20,8 @@ export function projectUrls(projectArg, opts = {}, cfg = loadConfig()) {
   const meta = projectArg ? readMeta(projectArg) : null;
   if (!proj && meta?.file && existsSync(meta.file)) proj = loadProjectFile(meta.file);
   if (proj) {
-    requireConfig(cfg, ['domain']);
-    return { project: proj.project, urls: hostnames(proj, cfg.domain).map((h) => ({ service: h.service, url: `https://${h.hostname}` })) };
+    if (!proj.domain) requireConfig(cfg, ['domain']);
+    return { project: proj.project, urls: hostnames(proj, projectDomain(proj, cfg)).map((h) => ({ service: h.service, url: `https://${h.hostname}` })) };
   }
   if (meta?.hostnames?.length) {
     return { project: projectArg, urls: meta.hostnames.map((h) => ({ service: h.split('.')[0], url: `https://${h}` })) };

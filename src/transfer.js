@@ -11,7 +11,7 @@ const log = (...a) => console.error(...a); // stdout may carry the bundle
 export function cleanProject(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('project entry must be a mapping');
   const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => obj[k] !== undefined).map((k) => [k, obj[k]]));
-  const out = pick(raw, ['project', 'autostart']);
+  const out = pick(raw, ['project', 'domain', 'autostart']);
   out.services = (Array.isArray(raw.services) ? raw.services : []).map((s) => {
     const svc = pick(s || {}, ['name', 'root', 'url', 'originRequest']);
     if (Array.isArray(s?.paths) && s.paths.length) svc.paths = s.paths.map((p) => pick(p || {}, ['path', 'url', 'originRequest']));
