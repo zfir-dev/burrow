@@ -13,6 +13,16 @@ import * as dash from '../src/dashboard/manage.js';
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const program = new Command();
 program.name('burrow').description('Manage Cloudflare Tunnels for local projects').version(pkg.version);
+// Event history: state-changing commands are recorded with their source (src/history.js),
+// also when the run is cut short by Ctrl+C, SIGTERM or process.exit().
+let tracked = null;
+program.hook('preAction', async (_, command) => {
+  try { tracked = (await import('../src/history.js')).trackCommand(command); } catch {}
+});
+program.hook('postAction', () => {
+  try { tracked?.finish(); } catch {}
+  tracked = null;
+});
 program.command('completion <shell>')
   .description('print a shell completion script: bash | zsh')
   .action(async (shell) => {
@@ -30,6 +40,12 @@ const wrap = (fn) => async (...args) => {
     process.exitCode = 1;
   }
 };
+program.command('update')
+  .description('update burrow from GitHub (git checkout: git pull --ff-only + npm install; global install: npm i -g)')
+  .option('--check', 'only report whether a newer commit or version exists')
+  .option('--dry-run', 'print what would run')
+  .option('--force', 'global install: reinstall even when up to date')
+  .action(wrap(async (o) => (await import('../src/update.js')).update(o)));
 program.command('url [project]')
   .description("print a project's public URLs")
   .option('-f, --file <path>', 'path to tunnel.yml')
@@ -62,11 +78,19 @@ program.command('add [project]')
   .option('--force', 'overwrite an existing file')
   .option('-y, --yes', 'never prompt')
   .action(wrap(async (p, o) => (await import('../src/add.js')).add(p, o)));
+program.command('edit [project]')
+  .description('open tunnel.yml in $EDITOR, validate it on save, and offer to apply it if the project is running')
+  .option('-f, --file <path>', 'path to tunnel.yml')
+  .option('--no-apply', 'only save, never re-run up')
+  .option('-y, --yes', 'apply without asking when the project is running')
+  .option('--dry-run', 'apply as "up --dry-run"')
+  .action(wrap(async (p, o) => (await import('../src/edit.js')).edit(p, o)));
 program.command('up [project]')
   .description('create/reuse tunnel, set ingress and DNS, start cloudflared')
   .option('-f, --file <path>', 'path to tunnel.yml')
   .option('--dry-run', 'print the plan without calling Cloudflare or starting anything')
   .option('--force', 'replace DNS records not managed by burrow on the same hostnames')
+  .option('--no-hooks', 'skip the hooks in tunnel.yml')
   .action(wrap((p, o) => cmd.up(p, o)));
 program.command('share <target>')
   .description('share a local port or URL on a temporary <random>.<domain> hostname')
@@ -81,6 +105,7 @@ program.command('down [project]')
   .option('--all', 'with --purge and no project: every burrow tunnel')
   .option('-y, --yes', 'with --purge --all: skip the confirmation')
   .option('--dry-run', 'print what would happen')
+  .option('--no-hooks', 'skip pre_down/post_down (a background pre_up process is still stopped)')
   .action(wrap((p, o) => cmd.down(p, o)));
 program.command('restart [project]')
   .description('re-sync and restart a project (all running projects when none is given)')
@@ -130,6 +155,15 @@ program.command('autostart [projects...]')
   .description('bring up autostart projects (what the systemd unit runs)')
   .option('--dry-run', 'print the list only')
   .action(wrap(async (p, o) => (await import('../src/service.js')).autostart(p, o)));
+program.command('watch [projects...]')
+  .description('watch connectors, tunnels and local ports; alert on changes (webhook, ntfy)')
+  .option('--interval <seconds>', 'seconds between checks', '60')
+  .option('--debounce <n>', 'checks in a row before a change alerts', '2')
+  .option('--once', 'check once and exit (for cron)')
+  .option('--dry-run', 'print alerts instead of sending them')
+  .option('--install-service', 'install a systemd user unit that runs burrow watch')
+  .option('--uninstall-service', 'remove that unit')
+  .action(wrap(async (p, o) => (await import('../src/watch.js')).watch(p, o)));
 program.command('logs [project]').description('show cloudflared logs')
   .option('-f, --file <path>', 'path to tunnel.yml')
   .option('-n, --lines <n>', 'number of lines', '100')
@@ -139,6 +173,14 @@ program.command('doctor [project]')
   .description('check config, token, zone, cloudflared and local service ports')
   .option('-f, --file <path>', 'path to tunnel.yml')
   .option('--offline', 'skip the Cloudflare API checks')
+  .option('--all', 'check every remembered project (ignore ./tunnel.yml)')
+  .option('--json', 'print the checks as one line of JSON')
   .action(wrap(async (p, o) => (await import('../src/doctor.js')).doctor(p, o)));
+program.command('stats [project]')
+  .description('requests, bandwidth and status codes per hostname (Cloudflare GraphQL Analytics)')
+  .option('-f, --file <path>', 'path to tunnel.yml')
+  .option('--since <window>', 'time window: 30m, 24h, 7d or an ISO date', '24h')
+  .option('--json', 'machine-readable output')
+  .action(wrap(async (p, o) => (await import('../src/stats.js')).stats(p, o)));
 
 await program.parseAsync();

@@ -53,11 +53,12 @@ export async function mockCloudflare({ zone = { id: 'zone-1', name: 'example.dev
     }
     if (/^\/zones\/[^/]+\/dns_records$/.test(p)) {
       if (req.method === 'POST') {
-        const r = { id: randomUUID(), ...body };
+        const r = { id: randomUUID(), zone_id: p.split('/')[2], ...body };
         state.records.push(r);
         return ok(r);
       }
       return ok(state.records.filter((r) =>
+        (!r.zone_id || r.zone_id === p.split('/')[2]) &&
         (!q.get('name') || r.name === q.get('name')) &&
         (!q.get('comment.exact') || r.comment === q.get('comment.exact')) &&
         (!q.get('comment.startswith') || String(r.comment || '').startsWith(q.get('comment.startswith')))));

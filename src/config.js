@@ -12,6 +12,7 @@ export const TEMPLATE = `# burrow config. Keep this file private (chmod 600). Ne
 # API token: dash.cloudflare.com/profile/api-tokens -> Create Custom Token
 #   Account > Cloudflare Tunnel > Edit
 #   Zone    > DNS               > Edit   (zone: your tunnel domain)
+#   Zone    > Analytics         > Read   (optional, only for burrow stats)
 #   Zone    > Zone              > Read   (optional, only if CF_ZONE_ID is empty)
 #   Account > Access: Apps and Policies > Edit   (optional, only for private: true)
 CF_API_TOKEN=
