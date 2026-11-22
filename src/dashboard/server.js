@@ -13,6 +13,7 @@ import {
 } from './auth.js';
 import { LOGIN_HTML, renderApp, APP_CSS, APP_JS, LOGIN_JS } from './ui.js';
 import { totpEnabled, verifyCode } from './totp.js';
+import { openSessionStore } from './session-store.js';
 import { loadPanels, sortPanels, panelJs, panelCss, panelVendor, events } from './panels.js';
 
 // Vendored front-end libraries, served from node_modules (no CDN, works offline).
@@ -135,13 +136,24 @@ function buildPanels(list) {
   return { list, html: renderApp(list), js: panelJs(list), css: panelCss(list), vendor: panelVendor(list) };
 }
 
-export function createDashboard({ password, log = console.log, panels } = {}) {
+// persistSessions: keep sessions (and their signing secret) in the state dir so they survive
+// a restart (see session-store.js). On for `burrow dashboard`; off by default (tests).
+export function createDashboard({ password, log = console.log, panels, persistSessions = false } = {}) {
   if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
     throw new Error(`Set BURROW_DASHBOARD_PASSWORD (at least ${MIN_PASSWORD_LENGTH} characters) in the burrow config.`);
   }
-  const key = sessionKey(newSecret(), password);
+  let store = null;
+  if (persistSessions) {
+    try { store = openSessionStore(); } catch (e) { log(`warning: sessions are kept in memory only (${e.message})`); }
+  }
+  const key = sessionKey(store ? store.secret : newSecret(), password);
   const sessions = new Map(); // id -> exp (server-side, so logout really ends a session)
   const sessionInfo = new Map(); // id -> { createdAt, lastSeen, ip, agent } (for the Sessions panel)
+  if (store) for (const [id, s] of store.sessions) { sessions.set(id, s.exp); sessionInfo.set(id, s.info); }
+  const saveSessions = (touchOnly = false) => {
+    if (!store) return;
+    try { (touchOnly ? store.touch : store.save)(sessions, sessionInfo); } catch (e) { log(`warning: could not save sessions: ${e.message}`); }
+  };
   const limiter = new RateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
   const busy = new Set();
   const ready = (panels ? Promise.resolve(sortPanels(panels)) : loadPanels()).then(buildPanels);
@@ -175,7 +187,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
     sessions: {
       current: () => authed(req) || null,
       list: () => [...sessions].filter(([, exp]) => exp > Date.now()).map(([id, exp]) => ({ id, exp, ...(sessionInfo.get(id) || {}) })),
-      revoke: (id) => { sessionInfo.delete(id); return sessions.delete(id); },
+      revoke: (id) => { sessionInfo.delete(id); const had = sessions.delete(id); saveSessions(); return had; },
       clearCookie: () => cookie('', 0),
     },
   });
@@ -184,11 +196,12 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
     const id = verifySession(key, parseCookies(req.headers.cookie)[COOKIE]);
     if (!id) return false;
     const exp = sessions.get(id);
-    if (!exp || exp < Date.now()) { sessions.delete(id); sessionInfo.delete(id); return false; }
+    if (!exp || exp < Date.now()) { sessions.delete(id); sessionInfo.delete(id); saveSessions(); return false; }
     const info = sessionInfo.get(id) || { createdAt: Date.now(), ip: clientIp(req), agent: String(req.headers['user-agent'] || '').slice(0, 200) };
     info.lastSeen = Date.now();
     info.ip = clientIp(req);
     sessionInfo.set(id, info);
+    saveSessions(true);
     return id;
   };
   const cookie = (value, maxAge) =>
@@ -246,6 +259,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       limiter.reset(ip);
       const s = signSession(key, SESSION_TTL);
       sessions.set(s.id, s.exp);
+      saveSessions();
       log(`login ok from ${ip}`);
       events.emit('event', { action: 'sign-in', detail: `from ${ip}` });
       if (wantsJson) return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(s.value, SESSION_TTL / 1000) });
@@ -264,6 +278,8 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
 
     if (req.method === 'POST' && path === '/logout') {
       sessions.delete(sid);
+      sessionInfo.delete(sid);
+      saveSessions();
       events.emit('event', { action: 'sign-out', detail: `from ${clientIp(req)}` });
       return json(res, 200, { ok: true }, { 'Set-Cookie': cookie('', 0) });
     }
@@ -334,7 +350,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
 
 export function runDashboard({ port, host = '127.0.0.1' }) {
   const cfg = loadConfig();
-  const server = createDashboard({ password: cfg.dashboardPassword });
+  const server = createDashboard({ password: cfg.dashboardPassword, persistSessions: true });
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => {
