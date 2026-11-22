@@ -1,9 +1,15 @@
 import * as cmd from './commands.js';
 import { localProjects, runningPid } from './process.js';
+import { isShare, restartShare } from './share.js';
 
 // `burrow restart [project]`: re-sync and restart one project's connector.
-// Without a project: every connector that is currently running.
+// Without a project: every connector that is currently running, shares included
+// (see restartShare for how a share is restarted).
 export async function restart(projectArg, opts = {}) {
+  if (projectArg && !opts.file && isShare(projectArg)) {
+    await restartShare(projectArg, opts);
+    return;
+  }
   if (projectArg || opts.file) {
     await cmd.up(projectArg, opts);
     return;
@@ -17,7 +23,8 @@ export async function restart(projectArg, opts = {}) {
   for (const project of running) {
     console.log(`== ${project}`);
     try {
-      await cmd.up(project, { dryRun: opts.dryRun });
+      if (isShare(project)) await restartShare(project, { dryRun: opts.dryRun });
+      else await cmd.up(project, { dryRun: opts.dryRun });
     } catch (e) {
       failed++;
       console.error(`burrow: ${project}: ${e.message}`);
