@@ -18,9 +18,10 @@ async function scan(cfg, includeActive) {
   const tunnels = (await cf.listTunnels()).filter((t) => t.name.startsWith('burrow-'));
   // One unreadable zone (e.g. a stale cache entry for a domain removed from the account)
   // doesn't block the rest; it's reported so the page can say so.
-  const zones = await knownZones(cf, cfg);
-  const records = [];
+  // Also when BURROW_DOMAIN's own zone can't be found: it's listed as not scanned.
   const zoneErrors = [];
+  const zones = await knownZones(cf, cfg, { onError: (z, e) => zoneErrors.push({ zone: z.domain, error: e.message }) });
+  const records = [];
   for (const z of zones) {
     try {
       for (const r of await inZone(cf, z.id).recordsByCommentPrefix('burrow:')) records.push({ ...r, zoneId: z.id, zoneName: z.domain });
