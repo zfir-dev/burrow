@@ -14,6 +14,7 @@ export const TEMPLATE = `# burrow config. Keep this file private (chmod 600). Ne
 #   Zone    > DNS               > Edit   (zone: your tunnel domain)
 #   Zone    > Analytics         > Read   (optional, only for burrow stats)
 #   Zone    > Zone              > Read   (optional, only if CF_ZONE_ID is empty)
+#   Account > Access: Apps and Policies > Edit   (optional, only for private: true)
 CF_API_TOKEN=
 # Account ID: dashboard -> domain overview -> right sidebar
 CF_ACCOUNT_ID=
@@ -21,6 +22,8 @@ CF_ACCOUNT_ID=
 CF_ZONE_ID=
 # Tunnel domain. Hostnames: <project>.<domain>, <service>-<project>.<domain>
 BURROW_DOMAIN=
+# Default allow list for services with private: true (comma-separated emails or @domains)
+BURROW_ACCESS_EMAILS=
 # Dashboard login (burrow dashboard). At least 12 characters.
 BURROW_DASHBOARD_PASSWORD=
 BURROW_DASHBOARD_PORT=7070
@@ -55,6 +58,7 @@ export function loadConfig() {
     accountId: pick('CF_ACCOUNT_ID'),
     zoneId: pick('CF_ZONE_ID'),
     domain: pick('BURROW_DOMAIN').toLowerCase().replace(/\.$/, ''),
+    accessEmails: pick('BURROW_ACCESS_EMAILS'),
     cloudflared: pick('CLOUDFLARED_BIN') || 'cloudflared',
     dashboardPassword: pick('BURROW_DASHBOARD_PASSWORD'),
     dashboardPort: pick('BURROW_DASHBOARD_PORT') || '7070',

@@ -1,7 +1,8 @@
 // Panel: add or edit a project from the dashboard. Writes a validated tunnel.yml and
 // can run `burrow up` right after. File paths never come from the browser: new files
 // go where `burrow import` puts them, edits go to the file `burrow up` remembered.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { stateDir } from '../../config.js';
 import { join } from 'node:path';
 import { assertLabel, tunnelName } from '../../naming.js';
 import { parseProject, hostnames, DASHBOARD_PROJECT } from '../../project.js';
@@ -10,6 +11,7 @@ import { isShare } from '../../share.js';
 import { defaultImportDir } from '../../transfer.js';
 import { Cloudflare } from '../../cloudflare.js';
 import { formFromText, renderNew, renderEdit, renameText } from '../../project-form.js';
+import { projectDomain, readZoneCache } from '../../zones.js';
 
 export const order = 10;
 
@@ -22,9 +24,57 @@ export function editableFile(project) {
 
 export const newProjectFile = (project) => join(defaultImportDir(), `${project}.tunnel.yml`);
 
+// Hostnames on the project's own domain (`domain:`), else BURROW_DOMAIN.
+const hostsOn = (proj, cfg) => {
+  const domain = projectDomain(proj, cfg);
+  return domain ? hostnames(proj, domain).map((h) => h.hostname) : [];
+};
 function preview(text, cfg) {
   const proj = parseProject(text);
-  return { yaml: text, hostnames: cfg.domain ? hostnames(proj, cfg.domain).map((h) => h.hostname) : [] };
+  return { yaml: text, domain: projectDomain(proj, cfg) || null, hostnames: hostsOn(proj, cfg) };
+}
+
+// Domains the form offers: Cloudflare zones on the account (cached for 5 minutes), the
+// zone cache, and domains remembered projects use. BURROW_DOMAIN is the default choice.
+let zoneList = { at: 0, key: '', names: [], error: null };
+const ZONE_LIST_TTL = 5 * 60 * 1000;
+async function accountZones(cfg) {
+  const key = `${cfg.accountId}`;
+  if (zoneList.key === key && Date.now() - zoneList.at < ZONE_LIST_TTL) return zoneList;
+  try {
+    const cf = new Cloudflare({ token: cfg.token, accountId: cfg.accountId, zoneId: cfg.zoneId });
+    const zones = await cf.all('/zones', { 'account.id': cfg.accountId });
+    const names = zones.filter((z) => !z.account?.id || z.account.id === cfg.accountId)
+      .map((z) => ({ name: z.name, status: z.status || 'active' }));
+    zoneList = { at: Date.now(), key, names, error: null };
+  } catch (e) { zoneList = { at: Date.now(), key, names: [], error: e.message }; }
+  return zoneList;
+}
+export async function domainChoices(cfg) {
+  const out = new Map();
+  const add = (name, source, status) => {
+    if (!name || name === cfg.domain) return;
+    const d = out.get(name) || { name, sources: [], status: null };
+    if (!d.sources.includes(source)) d.sources.push(source);
+    if (status) d.status = status;
+    out.set(name, d);
+  };
+  let error = null;
+  if (cfg.token && cfg.accountId) {
+    const z = await accountZones(cfg);
+    error = z.error;
+    for (const x of z.names) add(x.name, 'cloudflare', x.status);
+  } else error = 'Cloudflare not configured';
+  for (const [name, z] of Object.entries(readZoneCache())) if (z.accountId === cfg.accountId) add(name, 'cached');
+  for (const p of rememberedProjects()) {
+    const file = editableFile(p);
+    if (!file) continue;
+    try { const proj = parseProject(readFileSync(file, 'utf8'), file); if (proj.domain) add(proj.domain, 'in use'); } catch {}
+  }
+  return { default: cfg.domain || null, domains: [...out.values()].sort((a, b) => a.name.localeCompare(b.name)), error };
+}
+function rememberedProjects() {
+  try { return readdirSync(stateDir()).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)); } catch { return []; }
 }
 
 export async function enrich(projects) {
@@ -33,6 +83,7 @@ export async function enrich(projects) {
 
 export async function route(ctx) {
   const { method, path } = ctx;
+  if (method === 'GET' && path === '/api/domains') return ctx.json(200, await domainChoices(ctx.loadConfig())) ?? true;
   const rm = path.match(/^\/api\/projects\/([^/]+)\/rename$/);
   if (rm && method === 'POST') return rename(ctx, rm[1]);
   let m = path.match(/^\/api\/projects\/([^/]+)\/config$/);
@@ -120,7 +171,7 @@ async function rename(ctx, from) {
     text = renameText(before, to, file);
     const target = file === newProjectFile(from) ? newProjectFile(to) : file;
     if (target !== file && existsSync(target)) throw new Error(`${target} already exists`);
-    const hostsOf = (t) => (cfg.domain ? hostnames(parseProject(t), cfg.domain).map((h) => h.hostname) : []);
+    const hostsOf = (t) => hostsOn(parseProject(t), cfg);
     const a = hostsOf(before);
     const b = hostsOf(text);
     plan = { from, to, file: target, hosts: a.map((h, i) => ({ from: h, to: b[i] })), running: !!runningPid(from) };
@@ -193,6 +244,15 @@ export const html = {
       <label>Project name
         <input type="text" name="project" x-model="form.project" :disabled="formEditing" placeholder="acme-shop" autocomplete="off" required>
       </label>
+      <label>Domain
+        <select x-model="domainPick" @change="onDomainPick" aria-label="Domain">
+          <option value="" x-text="defaultDomainLabel"></option>
+          <template x-for="d in domainList" :key="d.name"><option :value="d.name" x-text="domainLabel(d)"></option></template>
+          <option value="__other__">Other domain…</option>
+        </select>
+      </label>
+      <input type="text" x-show="domainIsOther" x-model="domainOther" placeholder="example.org" aria-label="Other domain" autocomplete="off">
+      <small class="muted" x-show="hasDomainHint" x-text="domainHint"></small>
       <label>App: port or URL for <code x-text="rootHost"></code>
         <input type="text" name="app" x-model="form.app" placeholder="3000" autocomplete="off">
       </label>
@@ -270,10 +330,11 @@ button.small{width:auto;padding:.25rem .7rem;font-size:.8rem}
 
 export const js = `
 burrowPanel(function () {
-  function blank() { return { project: '', app: '', paths: [], services: [], autostart: false }; }
+  function blank() { return { project: '', domain: '', app: '', paths: [], services: [], autostart: false }; }
   function noPreview() { return { hostnames: [], yaml: '' }; }
   return {
     formOpen: false, formEditing: false, form: blank(), formUp: true, formError: '', formBusy: false, preview: noPreview(),
+    domainList: [], domainDefault: '', domainError: '', domainPick: '', domainOther: '', domainStart: '',
     formRunning: false, renameOpen: false, renameTo: '', renamePlan: null, renameError: '', renameBusy: false, renameUp: true, renameTimer: null,
     get hasRenameError() { return this.renameError.length > 0; },
     get hasRenamePlan() { return !!this.renamePlan; },
@@ -318,12 +379,42 @@ burrowPanel(function () {
     get formTitle() { return this.formEditing ? 'Edit ' + this.form.project : 'New project'; },
     get hasFormError() { return this.formError.length > 0; },
     get hasPreview() { return this.preview.yaml.length > 0; },
-    get rootHost() { return (this.form.project || '<project>') + '.<domain>'; },
+    get rootHost() { return (this.form.project || '<project>') + '.' + (this.formDomain() || this.domainDefault || '<domain>'); },
+    get defaultDomainLabel() { return this.domainDefault ? this.domainDefault + ' (default)' : 'Default (BURROW_DOMAIN)'; },
+    get domainIsOther() { return this.domainPick === '__other__'; },
+    get domainHint() {
+      if (this.formEditing && this.formDomain() !== this.domainStart) {
+        return 'Changing the domain moves every hostname: the next burrow up deletes the old DNS records and creates new ones on the same tunnel.';
+      }
+      return this.domainError ? 'Could not list Cloudflare zones (' + this.domainError + '); pick Other to type one.' : '';
+    },
+    get hasDomainHint() { return this.domainHint.length > 0; },
+    domainLabel: function (d) {
+      var extra = d.status && d.status !== 'active' ? ' (' + d.status + ')' : (d.sources.indexOf('cloudflare') < 0 ? ' (' + d.sources.join(', ') + ')' : '');
+      return d.name + extra;
+    },
+    formDomain: function () { return this.domainPick === '__other__' ? this.domainOther.trim().toLowerCase() : this.domainPick; },
+    formPayload: function () { return Object.assign({}, this.form, { domain: this.formDomain() }); },
+    onDomainPick: function () { if (this.domainIsOther) this.domainOther = ''; this.preview = noPreview(); },
+    loadDomains: async function () {
+      var want = this.form.domain || '';
+      this.domainStart = want; this.domainOther = '';
+      try {
+        var j = await getJson('/api/domains');
+        this.domainList = j.domains; this.domainDefault = j.default || ''; this.domainError = j.error || '';
+      } catch (e) { this.domainError = e.message; }
+      var known = !want || this.domainList.some(function (d) { return d.name === want; });
+      var self = this;
+      this.$nextTick(function () {
+        if (known) self.domainPick = want; else { self.domainPick = '__other__'; self.domainOther = want; }
+      });
+    },
     canEdit: function (p) { return !!p.editable; },
 
     openForm: function (form, editing, up) {
       this.form = form; this.formEditing = editing; this.formUp = up;
       this.formError = ''; this.preview = noPreview(); this.formOpen = true;
+      this.loadDomains();
     },
     newProject: function () { this.openForm(blank(), false, true); },
     editProject: async function (p) {
@@ -344,7 +435,7 @@ burrowPanel(function () {
     checkProject: async function () {
       this.formError = '';
       try {
-        var r = await post('/api/projects/check', { form: this.form, editing: this.formEditing });
+        var r = await post('/api/projects/check', { form: this.formPayload(), editing: this.formEditing });
         var j = await r.json().catch(function () { return {}; });
         if (r.ok) this.preview = { hostnames: j.hostnames || [], yaml: j.yaml || '' };
         else { this.preview = noPreview(); this.formError = j.error || ('HTTP ' + r.status); }
@@ -353,7 +444,7 @@ burrowPanel(function () {
     saveProject: async function () {
       this.formBusy = true; this.formError = '';
       try {
-        var r = await post(this.formUrl(), { form: this.form, up: this.formUp });
+        var r = await post(this.formUrl(), { form: this.formPayload(), up: this.formUp });
         if (r.status === 401) { location.assign('/login'); return; }
         var j = await r.json().catch(function () { return {}; });
         if (j.saved) {

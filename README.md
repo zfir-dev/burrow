@@ -58,6 +58,7 @@ versions. The systemd unit (if you use one) records the Node binary path when it
    - **Zone > DNS > Edit**, limited to the tunnel domain's zone
    - optional **Zone > Analytics > Read**, only for `burrow stats`
    - optional **Zone > Zone > Read**, only if you leave `CF_ZONE_ID` empty (used to look up the zone ID)
+   - optional **Account > Access: Apps and Policies > Edit**, only for services with `private: true`
 3. Run `burrow init`. It writes `~/.config/burrow/config.env` (mode 600):
 
    ```env
@@ -103,7 +104,13 @@ services:
   A value that starts with `^` is used as a raw regex.
 - `originRequest` (on a service or a path) is passed through to cloudflared, e.g.
   `originRequest: { noTLSVerify: true }`.
+- `private: true` on a service puts its hostname behind **Cloudflare Access** (login by email),
+  allowing `allow: [you@example.dev, "@example.dev"]` or `BURROW_ACCESS_EMAILS`. Services stay
+  public by default ([details](docs/access.md)).
 - burrow adds a final `http_status:404` rule.
+- `hooks:` runs shell commands in the project directory around `up` and `down` (`pre_up`, `post_up`,
+  `pre_down`, `post_down`), e.g. start `next dev` in the background before the tunnel comes up
+  ([details](docs/hooks.md)). `--no-hooks` skips them.
 - `autostart: true` makes `burrow service` bring the project up at boot ([details](docs/service.md)).
 
 See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
@@ -113,11 +120,13 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | Command                          | What it does |
 | -------------------------------- | ------------ |
 | `burrow init`                    | Write the config template, or verify the token and access |
+| `burrow update`                  | Update burrow itself: a git checkout gets `git pull --ff-only` + `npm install`, a global npm install is reinstalled from its git source; `--check` only reports newer commits ([details](docs/update.md)) |
 | `burrow add [project]`           | Create a `tunnel.yml` by answering prompts, or non-interactively with `--app`, `--path`, `--service` ([details](docs/add.md)) |
 | `burrow up [project]`            | Create or reuse tunnel `burrow-<project>`, PUT its ingress config, upsert the CNAMEs (and remove stale ones tagged for this project), then (re)start `cloudflared` in the background |
+| `burrow edit [project]`          | Open `tunnel.yml` in `$EDITOR` (or `vi`/`nano`), validate it on save (a broken edit never replaces the file), and offer to re-run `up` if the project is running; `--yes`, `--no-apply` ([details](docs/edit.md)) |
 | `burrow share <port>`            | Share a local port on a temporary `<random>.<domain>` hostname; Ctrl+C, `burrow down` or `burrow destroy` removes it ([details](docs/share.md)) |
 | `burrow down [project]`          | Stop that project's `cloudflared` only. The tunnel and DNS records are kept, so the next `up` is quick |
-| `burrow restart [project]`       | Re-sync the tunnel config and DNS and restart `cloudflared` (same as `up`, which reuses the tunnel). With no project, restarts every connector that is running now; `--dry-run` shows the plan |
+| `burrow restart [project]`       | Re-sync the tunnel config and DNS and restart `cloudflared` (same as `up`, which reuses the tunnel). With no project, restarts every connector that is running now; `--dry-run` shows the plan. Detached shares are restarted on the same hostname, shares still attached to a `burrow share` in the foreground are skipped ([details](docs/share.md#restart-completion-and-export)) |
 | `burrow down`                    | Stop **every** running burrow connector (each pid in `~/.local/state/burrow/`) |
 | `burrow export [file]` / `burrow import <file>` | Export remembered project configs to YAML/JSON (tunnel.yml fields only, never tokens or passwords) and import them on another machine ([details](docs/export-import.md)) |
 | `burrow destroy [project]`       | Stop `cloudflared`, delete DNS records tagged `burrow:<project>`, delete the tunnel's connections and the tunnel. `burrow down <project> --purge` does the same |
@@ -215,26 +224,35 @@ The table stays within the window with every panel merged: each row shows **Logs
 **Down**, and the rest (**Destroy…** and panel actions such as Edit, Stats and Restart) are in
 the row's **⋯** menu. Long hostnames are shortened with an ellipsis (hover for the full name), the
 Uptime column is hidden below 1240 px, and below 1180 px each project becomes a card, so it also
-works on a phone.
+works on a phone. In card view, cells without an obvious meaning carry a small label (**Boot** in
+front of the start-at-boot switch, **up** in front of the uptime).
 
 ### Add and edit projects
 
-**New project** (top bar) and **Edit** (per row) open a form for the app port or URL, extra
-paths on the app, sub-services and `autostart`. **Check** shows the hostnames and the
+**New project** (top bar) and **Edit** (per row) open a form for the domain, the app port or URL,
+extra paths on the app, sub-services and `autostart`. **Check** shows the hostnames and the
 `tunnel.yml` it will write; **Save** validates it with the same rules as `burrow up` and can run
 `burrow up` right after (on by default for new and running projects).
 
 - New files go to `~/.config/burrow/projects/<project>.tunnel.yml` (where `burrow import` puts
   them) and are remembered, so **Up** works straight away. Existing names are refused.
 - Edits go to the file `burrow up` remembered. They're made in place, so comments and keys the
-  form doesn't show (`hooks`, `domain`, `private`, `originRequest`, …) are kept. The
+  form doesn't show (`hooks`, `private`, `originRequest`, …) are kept. The
   dashboard's own project and shares can't be edited.
+- **Domain** picks the project's zone ([per-project domains](docs/domains.md)). The default is
+  `BURROW_DOMAIN`, which writes no `domain:` key. The list has the Cloudflare zones on the
+  account (fetched with the dashboard's token, cached for 5 minutes, with a zone's status if it
+  isn't active yet), zones burrow has cached, and domains other projects use. **Other domain…**
+  takes any name. Changing an existing project's domain moves its hostnames: the next
+  `burrow up` deletes the records in the old zone and creates them in the new one.
+  `GET /api/domains` returns the choices.
 - The browser never sends a file path.
 
 **Rename…** in the edit form renames a project. Hostnames and the tunnel name are built from the
 project name, so a rename really replaces the project in Cloudflare, and it's done the safe way:
 
-1. The project must be stopped (**Down** first); the dialog shows every old → new hostname before
+1. The project must be stopped (**Down** first); the dialog shows every old → new hostname (on the
+   project's own domain) before
    anything happens, and names already used locally or by a Cloudflare tunnel are refused.
 2. `burrow destroy <old>` deletes the old tunnel and DNS records. If that fails, nothing else is
    changed.
@@ -362,6 +380,120 @@ Endpoints: `POST /api/bulk {action: up|down|restart, projects: [...]}` (at most 
 
 Server state lives in `~/.local/state/burrow/dashboard/server.{pid,log}`. A bare
 `burrow down` also stops the dashboard's tunnel connector, so run `burrow dashboard up` to bring it back.
+
+### Live updates
+
+The page keeps itself current over a server-sent event stream (`GET /api/stream`) instead of
+polling. While at least one page is open, the dashboard rebuilds the project list every 3
+seconds and pushes `changed` when anything differs (the page then reloads the list), or a
+`tick` with the server clock otherwise. Actions taken from the dashboard trigger a check right
+away. The toolbar shows **Live**, **Connecting** or **Polling**.
+
+The stream needs a signed-in session like every other endpoint. Each stream closes after 5
+minutes and the page reconnects, so a signed-out session stops getting updates. If the stream
+fails twice in a row, the page polls every 5 seconds and keeps retrying with backoff (up to 30
+seconds). At most 20 streams are open at once; extra pages get `503` and poll.
+
+| Variable | Default | Does |
+| --- | --- | --- |
+| `BURROW_DASHBOARD_LIVE` | on | `off` turns the stream off; pages poll every 5 seconds |
+| `BURROW_LIVE_MS` | `3000` | How often the server checks for changes |
+| `BURROW_LIVE_MAX_CLIENTS` | `20` | Open streams allowed at once |
+
+### Shares
+
+**Shares** in the toolbar starts a temporary link to a local port or URL, the same as
+`burrow share <target> --detach`. Pick a name (or leave it blank for a random one) and an
+expiry: 15 minutes, 1 hour, 4 hours, 1 day, 7 days or never. The panel lists this machine's
+shares with their link, target and time left. **+1 hour** resets the expiry to an hour from now.
+**Stop** asks first, then stops cloudflared and deletes the share's tunnel and DNS record
+(`burrow down share-<name>`).
+
+The dashboard stops expired shares within about 30 seconds. A share that expired while the
+dashboard was off is stopped when it next starts. A share started in a terminal with plain
+`burrow share` is listed, but you stop it there with Ctrl+C, and it has no expiry.
+
+| Endpoint | Does |
+| --- | --- |
+| `GET /api/shares` | List shares: `project`, `hostname`, `target`, `expiresAt`, `running`, `foreground` |
+| `POST /api/shares` | `{target, name?, expiresIn}` (minutes; `0` = never) starts a detached share |
+| `POST /api/shares/<share>/extend` | `{expiresIn}` sets a new expiry from now |
+| `POST /api/shares/<share>/stop` | `{confirm: true}` stops it and deletes its tunnel and DNS |
+
+### Cloudflare Access
+
+_Not merged yet (`feature/ui-access`)._
+
+### Doctor
+
+**Doctor** in the top bar runs `burrow doctor --json --all` on the server and lists every check
+with a **pass**, **warning**, **fail** or **skipped** badge: the config file and its permissions,
+`CF_API_TOKEN`, `CF_ACCOUNT_ID`, `BURROW_DOMAIN`, the token, zone, tunnel and DNS permissions
+(through the Cloudflare API), cloudflared, and the local services of every remembered project.
+Problems come with a **Fix** line (for example `chmod 600 …`, which token permission to add, or
+which local URL to start). **Skip Cloudflare API checks** runs it offline. The last report is kept
+until the dashboard restarts; one run at a time. Secrets are never part of the report.
+
+On the command line, `burrow doctor --json` prints the same report as one JSON line
+(`{ counts, checks: [{ section, status, label, detail, fix }] }`), and `--all` checks every
+remembered project instead of `./tunnel.yml`.
+
+### Uptime timeline
+
+_Not merged yet (`feature/ui-uptime`)._
+
+### Sessions and two-factor sign-in
+
+**Sessions** in the toolbar lists the browsers signed in to the dashboard: browser and OS, IP,
+when each signed in and when it was last active. Your own session is marked **this browser**.
+You can sign out one session, **Sign out other sessions**, or **Sign out everywhere** (asks
+first, and signs you out too). Sessions are listed by an opaque handle; session ids never leave
+the server. Sessions still last 12 hours, and restarting the dashboard or changing its password
+ends them all.
+
+**Two-factor sign-in** is optional and off by default. Turning it on makes sign-in ask for a
+6-digit code from an authenticator app (TOTP, SHA-1, 30 s; works with any common app):
+
+1. Open **Sessions** and click **Set up two-factor sign-in**.
+2. Scan the QR code with your app, or type the key shown under it. The key is shown only during
+   setup. Once two-factor is on, the dashboard never shows or returns it again.
+3. Enter the app's current code and click **Turn on**. A wrong code changes nothing. Setup
+   expires after 15 minutes. **Sign out other sessions** is ticked by default.
+
+From then on, the sign-in page has a code field. Each code works once, and the server accepts
+the code before or after the current one, to allow for clock drift. Wrong codes count toward
+the same limit as wrong passwords (5 per 15 minutes per IP). **Turn off** asks first and needs
+a current code that hasn't been used yet. The key is stored in
+`~/.local/state/burrow/dashboard/totp.json` (mode 600). If you lose the phone, delete that file
+on the server to turn two-factor off ([details](docs/two-factor.md)).
+
+| Endpoint | Does |
+| --- | --- |
+| `GET /api/sessions` | `sessions: [{handle, current, createdAt, lastSeen, ip, agent}]`, `twoFactor: {enabled, pending}` |
+| `POST /api/sessions/revoke` | `{handle}` signs one session out |
+| `POST /api/sessions/revoke-others` | Signs out every other session |
+| `POST /api/sessions/revoke-all` | `{confirm: true}` signs out every session, this one included |
+| `POST /api/two-factor/setup` | Starts setup; the only response that ever carries the key |
+| `POST /api/two-factor/enable` | `{code, signOutOthers}` turns it on |
+| `POST /api/two-factor/disable` | `{code, confirm: true}` turns it off and deletes the key |
+
+### Backup and restore
+
+**Backup** in the top bar has **Download backup**: a `burrow export` bundle of every remembered
+project (`burrow-projects-<date>.yml`), with `tunnel.yml` settings only. Tokens, passwords and
+`hooks:` are never in it, and temporary shares aren't either.
+
+To restore, pick a backup file. Before anything is written, the server lists each project in it
+with what would happen: **new**, **file exists** or **already remembered** (somewhere else), or
+**invalid**, plus the hostnames it would get. New projects are ticked; existing ones can only be
+picked with **Replace projects that already exist**. **Restore** asks you to type `restore`; the
+server plans again and writes the picked projects to `~/.config/burrow/projects/<project>.tunnel.yml`
+and remembers them, like `burrow import` (with `--force` for replaced ones). Nothing is started:
+use **Up** afterwards. Backups are limited to 1 MB.
+
+### Hooks and updates
+
+_Not merged yet (`feature/ui-hooks-updates`)._
 
 ## Tests
 

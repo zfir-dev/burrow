@@ -122,7 +122,7 @@ export const html = {
   headLead: '<th class="pick"><input type="checkbox" :checked="allPicked" @change="togglePickAll" aria-label="Select all projects"></th>',
   rowLead: '<td class="pick"><input type="checkbox" :disabled="p.builtIn" :checked="isPicked(p)" @change="togglePick(p)" :aria-label="pickLabel(p)"></td>',
   headCols: '<th title="Start at boot (autostart)">Boot</th>',
-  rowCols: '<td><input type="checkbox" role="switch" :checked="p.autostart" :disabled="autostartDisabled(p)" :title="autostartTitle(p)" @change="toggleAutostart(p)" :aria-label="autostartTitle(p)"></td>',
+  rowCols: '<td class="col-boot" data-label="Boot"><input type="checkbox" role="switch" :checked="p.autostart" :disabled="autostartDisabled(p)" :title="autostartTitle(p)" @change="toggleAutostart(p)" :aria-label="autostartTitle(p)"></td>',
   toolbar: `<li x-show="hasPicks"><small x-text="pickedText"></small></li>
 <li x-show="hasPicks"><button :aria-busy="bulkBusy" :disabled="bulkBusy" @click="bulkUp">Start</button></li>
 <li x-show="hasPicks"><button class="secondary" :disabled="bulkBusy" @click="bulkDown">Stop</button></li>`,
