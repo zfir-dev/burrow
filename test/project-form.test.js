@@ -36,7 +36,7 @@ test('renderNew matches burrow add, and the form round-trips', () => {
   assert.equal(proj.autostart, true);
   assert.deepEqual(proj.services.map((s) => s.url), ['http://localhost:3000', 'http://127.0.0.1:8025']);
   assert.deepEqual(formFromText(text), {
-    project: 'acme-shop', app: '3000', paths: [{ path: '/api', target: '3001' }],
+    project: 'acme-shop', domain: '', app: '3000', paths: [{ path: '/api', target: '3001' }],
     services: [{ name: 'mail', target: 'http://127.0.0.1:8025' }], autostart: true,
   });
 });
@@ -109,7 +109,7 @@ test('HTTP: create, check, read and edit a project; up runs the CLI', async () =
     assert.equal(list.projects.find((p) => p.project === 'todo-api').editable, true);
 
     j = await (await d.get('/api/projects/todo-api/config')).json();
-    assert.deepEqual(j.form, { project: 'todo-api', app: '5000', paths: [], services: [{ name: 'mail', target: '8025' }], autostart: false });
+    assert.deepEqual(j.form, { project: 'todo-api', domain: '', app: '5000', paths: [], services: [{ name: 'mail', target: '8025' }], autostart: false });
     assert.equal((await d.get('/api/projects/blog/config')).status, 404);
 
     r = await d.post('/api/projects/todo-api/config', { form: { ...j.form, app: '5001' }, up: true });

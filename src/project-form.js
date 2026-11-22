@@ -2,13 +2,22 @@
 // existing files are edited in place with the YAML document API, so comments and
 // keys the form doesn't know about (hooks, domain, private, originRequest…) are kept.
 import YAML from 'yaml';
-import { assertLabel } from './naming.js';
+import { assertDomain, assertLabel } from './naming.js';
 import { parseProject } from './project.js';
 import { buildDoc, renderYaml, toUrl, slug } from './add.js';
 
 const str = (v) => String(v ?? '').trim();
 
-// Form shape: { project, app, paths: [{ path, target }], services: [{ name, target }], autostart }
+// Form shape: { project, domain, app, paths: [{ path, target }], services: [{ name, target }], autostart }
+// domain: '' = BURROW_DOMAIN (no `domain:` key); undefined = leave the file's `domain:` alone.
+export function normalizeDomain(v) {
+  if (v === undefined || v === null) return undefined;
+  const d = str(v).toLowerCase().replace(/\.$/, '');
+  if (!d) return '';
+  try { assertDomain(d); } catch { throw new Error(`invalid domain "${str(v)}" (e.g. example.org)`); }
+  return d;
+}
+
 export function normalizeForm(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('form must be an object');
   const project = str(raw.project);
@@ -35,7 +44,8 @@ export function normalizeForm(raw) {
   const app = str(raw.app);
   if (!app && !services.length) throw new Error('add an app port or at least one sub-service');
   if (!app && paths.length) throw new Error('paths need an app port or URL');
-  return { project, app, paths, services, autostart: raw.autostart === true };
+  const domain = normalizeDomain(raw.domain);
+  return { project, ...(domain === undefined ? {} : { domain }), app, paths, services, autostart: raw.autostart === true };
 }
 
 const target = (url) => {
@@ -53,6 +63,7 @@ export function formFromText(text, source = 'tunnel.yml') {
   const rawRoot = list.find((s) => (explicit ? s.root === true : s.name === 'app'));
   return {
     project: proj.project,
+    domain: proj.domain || '',
     app: root ? target(root.url) : '',
     paths: (rawRoot?.paths || []).map((p) => ({ path: String(p.path), target: target(p.url) })),
     services: proj.services.filter((s) => !s.root).map((s) => ({ name: s.name, target: target(s.url) })),
@@ -68,7 +79,7 @@ export function renderNew(form) {
     services: f.services.map((s) => [s.name, s.target]),
   });
   if (f.autostart) doc.autostart = true;
-  return renderYaml(doc);
+  return renderYaml(f.domain ? { project: doc.project, domain: f.domain, ...doc } : doc);
 }
 
 // Existing file: replace services/autostart, keep everything else. Extra keys on a
@@ -103,6 +114,8 @@ export function renderEdit(text, form, source = 'tunnel.yml') {
   doc.set('services', doc.createNode(services));
   if (f.autostart) doc.set('autostart', true);
   else doc.delete('autostart');
+  if (f.domain) doc.set('domain', f.domain);
+  else if (f.domain === '') doc.delete('domain');
   const out = doc.toString({ lineWidth: 0 });
   parseProject(out, source); // same errors as `burrow up`
   return out;

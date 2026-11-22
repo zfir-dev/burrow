@@ -32,3 +32,6 @@ services:
 - The token needs the same permissions on every zone you use: **Zone > DNS > Edit**, plus
   **Zone > Zone > Read** to look the zone up.
 - `burrow export` keeps `domain:`.
+- The dashboard's project form has a **Domain** picker (Cloudflare zones on the account, cached
+  zones and domains in use, or any other name), and its hostname and rename previews use the
+  project's domain.
