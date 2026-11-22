@@ -382,7 +382,23 @@ _Not merged yet (`feature/ui-live`)._
 
 ### Shares
 
-_Not merged yet (`feature/ui-shares`)._
+**Shares** in the toolbar starts a temporary link to a local port or URL, the same as
+`burrow share <target> --detach`. Pick a name (or leave it blank for a random one) and an
+expiry: 15 minutes, 1 hour, 4 hours, 1 day, 7 days or never. The panel lists this machine's
+shares with their link, target and time left. **+1 hour** resets the expiry to an hour from now.
+**Stop** asks first, then stops cloudflared and deletes the share's tunnel and DNS record
+(`burrow down share-<name>`).
+
+The dashboard stops expired shares within about 30 seconds. A share that expired while the
+dashboard was off is stopped when it next starts. A share started in a terminal with plain
+`burrow share` is listed, but you stop it there with Ctrl+C, and it has no expiry.
+
+| Endpoint | Does |
+| --- | --- |
+| `GET /api/shares` | List shares: `project`, `hostname`, `target`, `expiresAt`, `running`, `foreground` |
+| `POST /api/shares` | `{target, name?, expiresIn}` (minutes; `0` = never) starts a detached share |
+| `POST /api/shares/<share>/extend` | `{expiresIn}` sets a new expiry from now |
+| `POST /api/shares/<share>/stop` | `{confirm: true}` stops it and deletes its tunnel and DNS |
 
 ### Cloudflare Access
 
