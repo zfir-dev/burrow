@@ -264,7 +264,17 @@ _Not merged yet (`feature/ui-stats`)._
 
 ### Logs
 
-_Not merged yet (`feature/ui-logs`)._
+The log viewer (**Logs** on a row, or **All logs** in the top bar for every tunnel at once):
+
+- **Search** filters lines as you type (in the combined view it matches project names too).
+- **Level** filter: all, info and up, warnings and errors, or errors only. Levels come from
+  cloudflared's `DBG/INF/WRN/ERR` (and `level=…`); warnings and errors are coloured.
+- **All logs** interleaves every `~/.local/state/burrow/*.log` by timestamp, tags each line with
+  its project, and picks up projects that start logging later.
+- **Download** saves the log as a file: the last 10 MB of one project, or the last 2 MB of each
+  project merged into one file for **All logs**.
+
+The viewer keeps the newest 3000 lines in the browser.
 
 ### Quick actions
 

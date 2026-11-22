@@ -33,6 +33,7 @@ export const renderApp = (panels = []) => {
   <ul><li><strong>burrow</strong></li><li><small :class="cfClass" x-text="cfText"></small></li></ul>
   <ul>
     ${s('toolbar')}
+    <li><button class="secondary outline" @click="openAllLogs">All logs</button></li>
     <li><button class="secondary outline" @click="load">Refresh</button></li>
     <li><button class="contrast outline" @click="logout">Sign out</button></li>
   </ul>
@@ -81,12 +82,19 @@ export const renderApp = (panels = []) => {
   <article x-show="logOpen" class="logs">
     <header class="logs-head">
       <strong x-text="logTitle"></strong>
+      <small class="muted" x-text="logCount"></small>
       <span class="spacer"></span>
+      <input type="search" class="log-search" x-model="logQuery" placeholder="Search" aria-label="Search logs">
+      <select class="log-level" x-model="logLevel" aria-label="Minimum level">
+        <option value="debug">All levels</option><option value="info">Info and up</option>
+        <option value="warn">Warnings and errors</option><option value="error">Errors only</option>
+      </select>
       <label><input type="checkbox" role="switch" x-model="follow"> Follow</label>
+      <a class="secondary outline" role="button" :href="logDownloadUrl" download>Download</a>
       <button class="secondary outline" @click="clearLogs">Clear</button>
       <button class="secondary outline" @click="closeLogs">Close</button>
     </header>
-    <pre x-ref="logbody" x-text="logText"></pre>
+    <div class="logbody" x-ref="logbody"><template x-for="l in filteredLogs" :key="l.id"><div class="logline" :class="l.level"><span class="logp" x-show="logAll" x-text="l.p"></span><span x-text="l.text"></span></div></template></div>
   </article>
   ${s('sections')}
 </main>
@@ -128,7 +136,14 @@ button.danger.outline{--pico-background-color:transparent;--pico-color:#dc2626}
 td small{color:var(--pico-muted-color)}
 .logs-head{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}.logs-head label{margin:0}
 .logs-head button{width:auto;margin:0;padding:.3rem .7rem;font-size:.85rem}.spacer{flex:1}
-.logs pre{height:420px;overflow:auto;margin:0;padding:.75rem;font-size:.78rem;white-space:pre-wrap;word-break:break-all}
+.logs .logbody{height:420px;overflow:auto;margin:0;padding:.75rem;font-family:var(--pico-font-family-monospace);font-size:.78rem;
+  white-space:pre-wrap;word-break:break-all;background:var(--pico-code-background-color);border-radius:var(--pico-border-radius)}
+.logline.debug{color:var(--pico-muted-color)}.logline.warn{color:#d97706}.logline.error{color:#dc2626}
+.logp{display:inline-block;min-width:8ch;margin-right:.6rem;color:#0172ad}
+.logs-head .log-search{width:14rem;margin:0;padding:.3rem .6rem;font-size:.85rem;height:auto}
+.logs-head .log-level{width:auto;margin:0;padding:.3rem 2rem .3rem .6rem;font-size:.85rem}
+.logs-head a[role=button]{width:auto;margin:0;padding:.3rem .7rem;font-size:.85rem}
+.muted{color:var(--pico-muted-color)}
 .toast{position:fixed;right:1rem;bottom:1rem;max-width:min(560px,calc(100% - 2rem));margin:0;cursor:pointer;z-index:10}
 .toast pre{margin:0;max-height:40vh;overflow:auto;font-size:.78rem;white-space:pre-wrap;background:transparent;padding:0}
 .toast.ok{border-left:4px solid #1f9d55}.toast.bad{border-left:4px solid #dc2626}
@@ -224,6 +239,14 @@ async function getJson(url) {
   return j;
 }
 var MAX_LOG_LINES = 3000;
+var LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
+// cloudflared prints "2026-01-01T00:00:00Z INF …"; also understands level=… and words.
+function levelOf(text) {
+  if (/\\b(ERR|FTL|PNC|ERROR|FATAL|PANIC)\\b|level=(error|fatal|panic)/i.test(text)) return 'error';
+  if (/\\b(WRN|WARN|WARNING)\\b|level=warn/i.test(text)) return 'warn';
+  if (/\\b(DBG|TRC|DEBUG|TRACE)\\b|level=(debug|trace)/i.test(text)) return 'debug';
+  return 'info';
+}
 
 // Panels (/panels.js) register mixins here before Alpine starts.
 var BURROW_PANELS = [];
@@ -246,6 +269,7 @@ document.addEventListener('alpine:init', function () {
     return mergePanels({
       projects: [], loading: true, now: Date.now(), cf: { error: null }, busy: {},
       logOpen: false, logProject: '', logLines: [], follow: true, es: null,
+      logAll: false, logQuery: '', logLevel: 'debug', logSeq: 0,
       destroyOpen: false, destroyName: '', confirmText: '',
       toastOpen: false, toastText: '', toastOk: true, toastTimer: null, timer: null,
 
@@ -353,20 +377,41 @@ document.addEventListener('alpine:init', function () {
         this.act({ project: name }, 'destroy', { confirm: name });
       },
 
-      get logTitle() { return 'Logs · ' + this.logProject; },
-      get logText() { return this.logLines.join('\\n'); },
-      openLogs: function (p) {
+      get logTitle() { return this.logAll ? 'Logs · all tunnels' : 'Logs · ' + this.logProject; },
+      get filteredLogs() {
+        var q = this.logQuery.trim().toLowerCase(), min = LEVELS[this.logLevel] || 0;
+        return this.logLines.filter(function (l) {
+          return LEVELS[l.level] >= min && (!q || l.text.toLowerCase().indexOf(q) >= 0 || l.p.indexOf(q) >= 0);
+        });
+      },
+      get logCount() {
+        var n = this.filteredLogs.length, all = this.logLines.length;
+        return n === all ? all + ' lines' : n + ' of ' + all + ' lines';
+      },
+      get logDownloadUrl() {
+        return this.logAll ? '/api/logs-all/download' : '/api/logs/' + encodeURIComponent(this.logProject) + '/download';
+      },
+      pushLog: function (project, text) {
+        this.logLines.push({ id: ++this.logSeq, p: project, text: text, level: levelOf(text) });
+        if (this.logLines.length > MAX_LOG_LINES) this.logLines.splice(0, this.logLines.length - MAX_LOG_LINES);
+      },
+      streamLogs: function (url, all) {
         var self = this;
         this.closeLogs();
-        this.logProject = p.project; this.logLines = []; this.logOpen = true;
-        this.es = new EventSource('/api/logs/' + encodeURIComponent(p.project));
+        this.logAll = all; this.logLines = []; this.logOpen = true;
+        this.es = new EventSource(url);
         this.es.onmessage = function (e) {
-          self.logLines.push(e.data);
-          if (self.logLines.length > MAX_LOG_LINES) self.logLines.splice(0, self.logLines.length - MAX_LOG_LINES);
+          if (all) { try { var j = JSON.parse(e.data); self.pushLog(j.p, j.l); } catch (err) { self.pushLog('', e.data); } }
+          else self.pushLog(self.logProject, e.data);
           if (self.follow) self.$nextTick(function () { var el = self.$refs.logbody; el.scrollTop = el.scrollHeight; });
         };
-        this.es.onerror = function () { if (self.es && self.es.readyState === 2) self.logLines.push('(stream closed)'); };
+        this.es.onerror = function () { if (self.es && self.es.readyState === 2) self.pushLog('', '(stream closed)'); };
       },
+      openLogs: function (p) {
+        this.logProject = p.project;
+        this.streamLogs('/api/logs/' + encodeURIComponent(p.project), false);
+      },
+      openAllLogs: function () { this.logProject = ''; this.streamLogs('/api/logs-all', true); },
       clearLogs: function () { this.logLines = []; },
       closeLogs: function () { if (this.es) this.es.close(); this.es = null; this.logOpen = false; },
 

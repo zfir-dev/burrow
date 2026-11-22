@@ -7,6 +7,7 @@ import { loadConfig } from '../config.js';
 import { assertLabel } from '../naming.js';
 import { logFile } from '../process.js';
 import { collect, invalidateCloudflare } from './data.js';
+import { readTail, combinedText, downloadName, streamAll } from './logs.js';
 import {
   passwordMatches, sessionKey, signSession, verifySession, RateLimiter, parseCookies, newSecret, MIN_PASSWORD_LENGTH,
 } from './auth.js';
@@ -246,6 +247,18 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
     if (req.method === 'GET' && m) {
       try { assertLabel(m[1], 'project'); } catch { return json(res, 400, { error: 'bad project' }); }
       return streamLog(req, res, m[1]);
+    }
+    if (req.method === 'GET' && path === '/api/logs-all') return streamAll(req, res, SECURITY_HEADERS);
+    if (req.method === 'GET' && path === '/api/logs-all/download') {
+      return send(res, 200, combinedText(), 'text/plain; charset=utf-8',
+        { 'Content-Disposition': `attachment; filename="${downloadName('all')}"` });
+    }
+    m = path.match(/^\/api\/logs\/([^/]+)\/download$/);
+    if (req.method === 'GET' && m) {
+      try { assertLabel(m[1], 'project'); } catch { return json(res, 400, { error: 'bad project' }); }
+      if (!existsSync(logFile(m[1]))) return json(res, 404, { error: 'no log yet' });
+      return send(res, 200, readTail(logFile(m[1]), 10 * 1024 * 1024), 'text/plain; charset=utf-8',
+        { 'Content-Disposition': `attachment; filename="${downloadName(m[1])}"` });
     }
 
     m = path.match(/^\/api\/tunnels\/([^/]+)\/(up|down|destroy)$/);
