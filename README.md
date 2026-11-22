@@ -210,22 +210,30 @@ See [`src/dashboard/panels/README.md`](src/dashboard/panels/README.md) for the i
 
 ### Add and edit projects
 
-**New project** (top bar) and **Edit** (per row) open a form for the app port or URL, extra
-paths on the app, sub-services and `autostart`. **Check** shows the hostnames and the
+**New project** (top bar) and **Edit** (per row) open a form for the domain, the app port or URL,
+extra paths on the app, sub-services and `autostart`. **Check** shows the hostnames and the
 `tunnel.yml` it will write; **Save** validates it with the same rules as `burrow up` and can run
 `burrow up` right after (on by default for new and running projects).
 
 - New files go to `~/.config/burrow/projects/<project>.tunnel.yml` (where `burrow import` puts
   them) and are remembered, so **Up** works straight away. Existing names are refused.
 - Edits go to the file `burrow up` remembered. They're made in place, so comments and keys the
-  form doesn't show (`hooks`, `domain`, `private`, `originRequest`, …) are kept. The
+  form doesn't show (`hooks`, `private`, `originRequest`, …) are kept. The
   dashboard's own project and shares can't be edited.
+- **Domain** picks the project's zone ([per-project domains](docs/domains.md)). The default is
+  `BURROW_DOMAIN`, which writes no `domain:` key. The list has the Cloudflare zones on the
+  account (fetched with the dashboard's token, cached for 5 minutes, with a zone's status if it
+  isn't active yet), zones burrow has cached, and domains other projects use. **Other domain…**
+  takes any name. Changing an existing project's domain moves its hostnames: the next
+  `burrow up` deletes the records in the old zone and creates them in the new one.
+  `GET /api/domains` returns the choices.
 - The browser never sends a file path.
 
 **Rename…** in the edit form renames a project. Hostnames and the tunnel name are built from the
 project name, so a rename really replaces the project in Cloudflare, and it's done the safe way:
 
-1. The project must be stopped (**Down** first); the dialog shows every old → new hostname before
+1. The project must be stopped (**Down** first); the dialog shows every old → new hostname (on the
+   project's own domain) before
    anything happens, and names already used locally or by a Cloudflare tunnel are refused.
 2. `burrow destroy <old>` deletes the old tunnel and DNS records. If that fails, nothing else is
    changed.
