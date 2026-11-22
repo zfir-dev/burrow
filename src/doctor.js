@@ -1,4 +1,4 @@
-import { existsSync, statSync, readdirSync, accessSync, constants } from 'node:fs';
+import { existsSync, statSync, readdirSync, accessSync, constants, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { connect } from 'node:net';
@@ -8,23 +8,102 @@ import { assertDomain } from './naming.js';
 import { findProjectFile, loadProjectFile } from './project.js';
 import { readMeta } from './process.js';
 import { loadHooks } from './hooks.js';
+import { parseCommands, isAssignment } from './shell-words.js';
 import { zoneIdFor } from './zones.js';
 
-const SHELL_BUILTINS = new Set(['cd', 'exec', 'export', 'set', 'test', '[', 'true', 'false', ':', '.', 'source', 'echo', 'printf', 'exit', 'trap', 'wait', 'sleep', 'if', 'for', 'while', 'case', '{', '(']);
+// Shell builtins and keywords that need no file; cd is followed so later commands are checked
+// in the right directory.
+const SHELL_BUILTINS = new Set(['cd', 'export', 'set', 'unset', 'test', '[', 'true', 'false', ':', '.', 'source', 'echo', 'printf',
+  'exit', 'trap', 'wait', 'read', 'shift', 'umask', 'ulimit', 'alias', 'eval', 'return', 'local', 'readonly', 'type', 'hash', 'kill', 'pwd']);
+// Prefixes that run the command after them.
+const WRAPPERS = new Set(['exec', 'nohup', 'command', 'time', 'env', 'nice', 'setsid']);
 const executable = (p) => { try { accessSync(p, constants.X_OK); return statSync(p).isFile(); } catch { return false; } };
+const onPath = (word, path) => {
+  for (const dir of path.split(delimiter)) if (dir && executable(join(dir, word))) return join(dir, word);
+  return null;
+};
 
-// Can the first word of a hook command be found? Best effort: a hook is a shell command, so
-// anything with leading variable assignments, builtins or shell syntax is not second-guessed.
-export function hookCommandFound(run, cwd, path = process.env.PATH || '') {
-  const word = String(run).trim().split(/\s+/)[0] || '';
-  if (!word || /[=$`'"*?;|&<>(){}]/.test(word) || SHELL_BUILTINS.has(word)) return { ok: true, detail: 'not checked (shell syntax)' };
-  if (word.includes('/')) {
-    const p = isAbsolute(word) ? word : join(cwd, word);
-    return executable(p) ? { ok: true, detail: word } : { ok: false, detail: `${word} not found or not executable in ${cwd}` };
-  }
-  for (const dir of path.split(delimiter)) if (dir && executable(join(dir, word))) return { ok: true, detail: join(dir, word) };
-  return { ok: false, detail: `${word} not found on PATH` };
+function packageScripts(dir) {
+  try { return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts || {}; } catch { return null; }
 }
+
+// `npm run x`, `npm start|test|stop|restart`, `yarn [run] x`, `pnpm [run] x`: is script x in
+// package.json? Returns a problem string or null.
+function scriptProblem(tool, args, cwd) {
+  const rest = args.filter((a) => !a.startsWith('-'));
+  let script = null;
+  if (tool === 'npm') {
+    if (['run', 'run-script', 'rum', 'urn'].includes(rest[0])) script = rest[1];
+    else if (['start', 'test', 't', 'stop', 'restart'].includes(rest[0])) script = rest[0] === 't' ? 'test' : rest[0];
+    if (!script) return null;
+    if (script === 'start' && rest[0] === 'start' && existsSync(join(cwd, 'server.js'))) return null; // npm's default
+  } else {
+    const builtin = ['install', 'add', 'remove', 'i', 'exec', 'dlx', 'create', 'init', 'why', 'list', 'ls', 'outdated', 'upgrade', 'up', 'update', 'link', 'unlink', 'config', 'cache', 'store', 'audit', 'info', 'publish', 'pack'];
+    if (rest[0] === 'run') script = rest[1];
+    else if (rest[0] && !builtin.includes(rest[0])) script = rest[0];
+    if (!script) return null;
+  }
+  const scripts = packageScripts(cwd);
+  if (!scripts) return `${tool} ${rest.join(' ')}: no package.json in ${cwd}`;
+  return script in scripts ? null : `${tool}: no "${script}" script in ${join(cwd, 'package.json')}`;
+}
+
+// Check a hook command without running it: for every simple command (each part of a
+// pipeline, && / || / ; list), skip VAR=value prefixes and wrappers (env, exec, nohup, …),
+// follow `cd <dir>`, and look the command up (builtin, ./script relative to the current
+// directory, or PATH); `npm run x` and friends also need script x in package.json.
+// -> { ok, detail, problems: [...], checked: [...], unchecked: [...] }
+export function checkHookCommand(run, cwd, path = process.env.PATH || '') {
+  const problems = [];
+  const checked = [];
+  const unchecked = [];
+  let dir = cwd;
+  for (const cmd of parseCommands(run)) {
+    if (cmd.unsupported) { unchecked.push(cmd.unsupported); continue; }
+    let words = cmd.words.slice();
+    while (words.length && isAssignment(words[0])) words.shift();
+    while (words.length && !words[0].quoted && WRAPPERS.has(words[0].text)) {
+      const w = words.shift().text;
+      while (words.length && (words[0].text.startsWith('-') || (w === 'env' && isAssignment(words[0])))) {
+        const opt = words.shift().text;
+        if (w === 'nice' && opt === '-n') words.shift();
+      }
+    }
+    if (!words.length) continue;
+    const [head, ...args] = words;
+    if (head.expands) { unchecked.push(`${head.text} (variable)`); continue; }
+    const name = head.text;
+    if (name === 'cd') {
+      const target = args[0];
+      if (!target) { dir = process.env.HOME || dir; continue; }
+      if (target.expands || target.text === '-') { unchecked.push(`cd ${target.text}`); dir = null; continue; }
+      const next = isAbsolute(target.text) ? target.text : join(dir || cwd, target.text);
+      if (dir !== null && !existsSync(next)) problems.push(`cd ${target.text}: no such directory in ${dir}`);
+      dir = dir === null ? null : next;
+      continue;
+    }
+    if (SHELL_BUILTINS.has(name)) { checked.push(name); continue; }
+    if (name.includes('/')) {
+      if (dir === null && !isAbsolute(name)) { unchecked.push(name); continue; }
+      const p = isAbsolute(name) ? name : join(dir, name);
+      if (executable(p)) checked.push(name); else problems.push(`${name} not found or not executable in ${dir}`);
+      continue;
+    }
+    if (!onPath(name, path)) { problems.push(`${name} not found on PATH`); continue; }
+    checked.push(name);
+    if (['npm', 'yarn', 'pnpm'].includes(name) && dir !== null) {
+      const p = scriptProblem(name, args.map((a) => a.text), dir);
+      if (p) problems.push(p);
+    }
+  }
+  const ok = problems.length === 0;
+  const parts = ok ? [checked.length ? `found: ${[...new Set(checked)].join(', ')}` : ''] : problems;
+  if (unchecked.length) parts.push(`not checked: ${[...new Set(unchecked)].join(', ')}`);
+  return { ok, detail: parts.filter(Boolean).join('; ') || 'nothing to check', problems, checked, unchecked };
+}
+
+// Kept for callers of the first version: the result of checkHookCommand.
+export const hookCommandFound = (run, cwd, path) => checkHookCommand(run, cwd, path);
 
 const MARK = { pass: '✓', warn: '!', fail: '✗', skip: '-' };
 
@@ -154,7 +233,7 @@ export async function doctor(projectArg, opts = {}) {
     }
     for (const [name, h] of Object.entries(hooks)) {
       const cwd = dirname(file);
-      const r = hookCommandFound(h.run, cwd);
+      const r = checkHookCommand(h.run, cwd);
       report(r.ok ? 'pass' : 'warn', `hook ${name}${h.background ? ' (background)' : ''}`, r.detail,
         `Install the command or fix hooks.${name} in ${file}; hooks run with /bin/sh in ${cwd}.`);
     }
