@@ -9,6 +9,7 @@
     "dns",
     "cli"
   ],
+  "repository": "github:zfir-dev/burrow",
   "type": "module",
   "bin": {
     "burrow": "bin/burrow.js"

@@ -113,6 +113,7 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | Command                          | What it does |
 | -------------------------------- | ------------ |
 | `burrow init`                    | Write the config template, or verify the token and access |
+| `burrow update`                  | Update burrow itself: a git checkout gets `git pull --ff-only` + `npm install`, a global npm install is reinstalled from its git source; `--check` only reports newer commits ([details](docs/update.md)) |
 | `burrow add [project]`           | Create a `tunnel.yml` by answering prompts, or non-interactively with `--app`, `--path`, `--service` ([details](docs/add.md)) |
 | `burrow up [project]`            | Create or reuse tunnel `burrow-<project>`, PUT its ingress config, upsert the CNAMEs (and remove stale ones tagged for this project), then (re)start `cloudflared` in the background |
 | `burrow share <port>`            | Share a local port on a temporary `<random>.<domain>` hostname; Ctrl+C, `burrow down` or `burrow destroy` removes it ([details](docs/share.md)) |
