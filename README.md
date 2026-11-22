@@ -422,7 +422,21 @@ dashboard was off is stopped when it next starts. A share started in a terminal 
 
 ### Cloudflare Access
 
-_Not merged yet (`feature/ui-access`)._
+**Access** (per row) lists the project's hostnames, each with a switch that puts it behind
+[Cloudflare Access](docs/access.md) (`private: true`) and an optional allow list of emails and
+`@domain`s. An empty list uses `BURROW_ACCESS_EMAILS`. Services stay public unless you switch
+them on. Saving edits `private:`/`allow:` in the project's `tunnel.yml` in place, so comments
+and other keys stay. Access apps are created and removed by `burrow up`, so **Apply now** runs
+it; it's on by default when the project is running. Until then, the row shows
+**access: pending** and each hostname shows **not applied yet** or **still protected**.
+Protected rows show **private N**.
+
+Making a private service public again lists the hostnames that will open up and needs an
+explicit "I understand" tick (the API wants `confirmPublic: true`). The token needs
+**Account > Access: Apps and Policies > Edit** only once you use `private: true`.
+
+`GET /api/access/<project>` returns `services: [{service, hostname, private, allow, effective, applied}]`.
+`POST /api/access/<project>` takes `{services: [{service, private, allow}], up, confirmPublic}`.
 
 ### Doctor
 
