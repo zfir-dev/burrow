@@ -35,7 +35,13 @@ export const renderApp = (panels = []) => {
 <header class="container-fluid wide"><nav>
   <ul><li><strong>burrow</strong></li><li><small :class="cfClass" x-text="cfText"></small></li></ul>
   <ul>
-    ${s('toolbar')}
+    ${s('toolbarMain')}
+    <li><details class="row-menu toolbar-more">
+      <summary class="secondary outline" role="button" aria-haspopup="menu" title="More panels">More</summary>
+      <div class="menu" role="menu"><ul>
+        ${s('toolbar')}
+      </ul></div>
+    </details></li>
     <li><button class="secondary outline" @click="openAllLogs">All logs</button></li>
     <li><button class="secondary outline" @click="load">Refresh</button></li>
     <li><button class="contrast outline" @click="logout">Sign out</button></li>
@@ -158,6 +164,10 @@ td small{color:var(--pico-muted-color)}
 .projects-wrap{margin-bottom:var(--pico-spacing)}
 table.projects{width:100%;margin-bottom:0}
 table.projects td.col-local{white-space:normal;min-width:7rem;max-width:15rem}
+/* Badges after the name (hook failed, private, ...) wrap under it instead of widening the column. */
+table.projects td.col-project{white-space:normal}
+table.projects td.col-project strong{white-space:nowrap}
+table.projects td.col-project .badge{margin:.1rem .25rem 0 0}
 table.projects td.col-local small,table.projects td.col-conn small{line-height:1.3;display:inline-block}
 table.projects .host a{max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
 table.projects td.col-actions{width:1%}
@@ -175,6 +185,13 @@ table.projects td.col-actions{width:1%}
 header nav{flex-wrap:wrap;gap:.25rem 1rem}
 header nav ul:last-child{flex-wrap:wrap;justify-content:flex-end}
 header nav ul:last-child li{padding-inline:.2rem}
+/* Panel buttons live in the "More" menu so the top bar stays on one row on a laptop screen. */
+header nav .toolbar-more>summary{padding:.35rem .75rem;font-size:.875rem}
+header nav .toolbar-more .menu{min-width:11rem}
+header nav .toolbar-more .menu ul{display:flex;flex-direction:column;align-items:stretch;gap:.1rem;margin:0;padding:0}
+header nav .toolbar-more .menu li{display:block;list-style:none;margin:0;padding:0}
+header nav .toolbar-more .menu button{padding:.35rem .6rem;font-size:.85rem}
+@media (min-width:1180px){header nav,header nav ul:last-child{flex-wrap:nowrap}}
 header nav button,header nav a[role=button]{padding:.35rem .75rem;font-size:.875rem;margin:0}
 @media (max-width:1239px){table.projects .col-uptime{display:none}}
 @media (max-width:1179px){

@@ -94,7 +94,7 @@ export async function route(ctx) {
 }
 
 export const html = {
-  toolbar: '<li><small class="live-status" :class="liveClass" :title="liveTitle" x-text="liveText"></small></li>',
+  toolbarMain: '<li><small class="live-status" :class="liveClass" :title="liveTitle" x-text="liveText"></small></li>',
 };
 
 export const css = `
