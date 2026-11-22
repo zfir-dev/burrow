@@ -58,6 +58,7 @@ versions. The systemd unit (if you use one) records the Node binary path when it
    - **Zone > DNS > Edit**, limited to the tunnel domain's zone
    - optional **Zone > Analytics > Read**, only for `burrow stats`
    - optional **Zone > Zone > Read**, only if you leave `CF_ZONE_ID` empty (used to look up the zone ID)
+   - optional **Account > Access: Apps and Policies > Edit**, only for services with `private: true`
 3. Run `burrow init`. It writes `~/.config/burrow/config.env` (mode 600):
 
    ```env
@@ -103,6 +104,9 @@ services:
   A value that starts with `^` is used as a raw regex.
 - `originRequest` (on a service or a path) is passed through to cloudflared, e.g.
   `originRequest: { noTLSVerify: true }`.
+- `private: true` on a service puts its hostname behind **Cloudflare Access** (login by email),
+  allowing `allow: [you@example.dev, "@example.dev"]` or `BURROW_ACCESS_EMAILS`. Services stay
+  public by default ([details](docs/access.md)).
 - burrow adds a final `http_status:404` rule.
 - `autostart: true` makes `burrow service` bring the project up at boot ([details](docs/service.md)).
 
