@@ -260,7 +260,13 @@ _Not merged yet (`feature/ui-cleanup`)._
 
 ### Bulk actions and auto-start
 
-_Not merged yet (`feature/ui-bulk`)._
+Tick the checkboxes in front of projects (or the header box for all of them) and use **Start** / **Stop** in the toolbar. Projects run one after another, each with the same busy lock as the row buttons; the result lists every project and the call returns `207` when some failed. The built-in `burrow` project can't be picked.
+
+The **Boot** switch sets `autostart: true` in the project's tunnel file (comments and other keys are kept). Projects listed in `BURROW_AUTOSTART` show a locked switch: change those in `~/.config/burrow/config.env`. Projects without a tunnel file can't be toggled.
+
+The bar under the table shows the `burrow.service` systemd unit and which projects it brings up. **Install** runs `burrow service install --now`; **Uninstall** asks first, because systemd runs `burrow down` when it stops the unit (every connector stops, tunnels and DNS are kept).
+
+Endpoints: `POST /api/bulk {action: up|down|restart, projects: [...]}` (at most 50), `POST /api/autostart/:project {enabled}`, `GET /api/boot`, `POST /api/boot {action: install|uninstall, confirm}`.
 
 Server state lives in `~/.local/state/burrow/dashboard/server.{pid,log}`. A bare
 `burrow down` also stops the dashboard's tunnel connector, so run `burrow dashboard up` to bring it back.
