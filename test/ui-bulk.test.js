@@ -24,6 +24,11 @@ for (const [name, port] of [['acme-shop', 3100], ['blog', 4000]]) {
   writeFileSync(join(sb.state, `${name}.json`), JSON.stringify({ project: name, file }));
 }
 
+test('the Boot switch cell is labelled in card view', async () => {
+  const { html } = await import('../src/dashboard/panels/bulk.js');
+  assert.match(html.rowCols, /^<td class="col-boot" data-label="Boot">/);
+});
+
 test('setAutostart toggles the key and keeps comments', () => {
   const on = setAutostart('# hi\nproject: blog\nservices:\n  - {name: app, url: "http://localhost:1"}\n', true);
   assert.match(on, /^# hi\n/);

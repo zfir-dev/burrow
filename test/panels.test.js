@@ -39,6 +39,7 @@ test('the project table fits narrow screens: compact cells, a row menu, cards on
   assert.match(APP_CSS, /@media \(max-width:1239px\)\{table\.projects \.col-uptime\{display:none\}\}/);
   assert.match(APP_CSS, /@media \(max-width:1179px\)\{[\s\S]*table\.projects thead\{display:none\}/);
   assert.match(APP_JS, /details\.row-menu\[open\]/, 'menus close on outside click and Escape');
+  assert.match(APP_CSS, /td\[data-label\]::before\{content:attr\(data-label\)/, 'panel cells can carry a card-view label');
 });
 
 test('panels sort by order then id; app.js merges mixins and hooks', () => {
