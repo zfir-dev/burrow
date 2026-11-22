@@ -3,6 +3,7 @@
 // Recording is best effort and never makes a command fail.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { constants as osConstants } from 'node:os';
 import { stateDir } from './config.js';
 import { findProjectFile, loadProjectFile } from './project.js';
 
@@ -66,8 +67,8 @@ export function readEvents({ limit = 200, project, source, action } = {}) {
 const RECORDED = new Set(['up', 'down', 'destroy', 'restart', 'share', 'prune', 'add', 'edit', 'import', 'service', 'autostart', 'dashboard', 'update']);
 const SUB_ACTIONS = { dashboard: ['up', 'down'], service: ['install', 'uninstall'] };
 
-// Called from bin/burrow.js after every command action (commander postAction hook).
-export function recordCommand(command, startedAt, { env = process.env, exitCode = process.exitCode } = {}) {
+// What a command would be recorded as, or null when it isn't recorded.
+export function describeCommand(command, env = process.env) {
   const name = command.name();
   if (!RECORDED.has(name)) return null;
   const opts = command.opts();
@@ -92,9 +93,53 @@ export function recordCommand(command, startedAt, { env = process.env, exitCode 
     ...(SUB_ACTIONS[name] ? args.slice(1) : name === 'share' ? [] : args.slice(project === args[0] ? 1 : 0)),
     ...['purge', 'all', 'force', 'includeActive', 'now'].filter((k) => opts[k]).map((k) => `--${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`),
   ].join(' ');
-  return recordEvent({
-    action, project, ok: !exitCode, detail,
-    source: sourceFromEnv(env, name === 'autostart' ? 'boot' : 'cli'),
-    durationMs: Date.now() - startedAt,
-  });
+  return { action, project, detail, source: sourceFromEnv(env, name === 'autostart' ? 'boot' : 'cli') };
+}
+
+export function recordCommand(command, startedAt, { env = process.env, exitCode = process.exitCode, note = '' } = {}) {
+  const d = describeCommand(command, env);
+  if (!d) return null;
+  return recordEvent({ ...d, ok: !exitCode, detail: [d.detail, note].filter(Boolean).join(' · '), durationMs: Date.now() - startedAt });
+}
+
+export const TRACKED_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
+// Called from bin/burrow.js before a command runs (commander preAction hook). Returns
+// { finish() } for the postAction hook. If the process ends first, the event is still
+// written from the 'exit' handler: on process.exit() inside a command, or on SIGINT /
+// SIGTERM / SIGHUP. A signal only ends the process here when nothing else listens for it
+// (e.g. `share` has its own Ctrl+C cleanup, which then exits or returns normally), so
+// the default "terminate" behaviour is kept, with exit code 128 + signal number.
+// SIGKILL can't be caught: such a run leaves no entry.
+export function trackCommand(command, { env = process.env, proc = process } = {}) {
+  const d = describeCommand(command, env);
+  if (!d) return null;
+  const startedAt = Date.now();
+  let done = false;
+  let signal = null;
+  const handlers = {};
+  const cleanup = () => {
+    proc.removeListener('exit', onExit);
+    for (const sig of TRACKED_SIGNALS) proc.removeListener(sig, handlers[sig]);
+  };
+  const finish = (exitCode, note) => {
+    if (done) return null;
+    done = true;
+    cleanup();
+    return recordEvent({ ...d, ok: !exitCode, detail: [d.detail, note].filter(Boolean).join(' · '), durationMs: Date.now() - startedAt });
+  };
+  function onExit(code) {
+    finish(code, signal ? `stopped by ${signal}` : `exited before finishing (code ${code})`);
+  }
+  for (const sig of TRACKED_SIGNALS) {
+    handlers[sig] = () => {
+      signal = sig;
+      if (proc.listenerCount(sig) <= 1) proc.exit(128 + (osConstants.signals[sig] || 0));
+    };
+    proc.on(sig, handlers[sig]);
+  }
+  proc.on('exit', onExit);
+  return {
+    finish: (exitCode = proc.exitCode) => finish(exitCode, signal ? `stopped by ${signal}` : ''),
+  };
 }
