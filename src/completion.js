@@ -1,9 +1,11 @@
 import { readdirSync } from 'node:fs';
 import { stateDir } from './config.js';
 import { findProjectFile, loadProjectFile, DASHBOARD_PROJECT } from './project.js';
+import { isShare } from './share.js';
 
 // Project names for completion: remembered/running projects, ./tunnel.yml, the dashboard.
-export function projectNames() {
+// Shares (share-<label>) are only offered where they work: see SHARE_COMMANDS.
+export function projectNames({ shares = false } = {}) {
   const names = new Set();
   try {
     for (const f of readdirSync(stateDir())) {
@@ -16,8 +18,13 @@ export function projectNames() {
     if (file) names.add(loadProjectFile(file).project);
   } catch {}
   names.add(DASHBOARD_PROJECT);
-  return [...names].sort();
+  return [...names].filter((n) => shares || !isShare(n)).sort();
 }
+
+export const shareNamesForCompletion = () => projectNames({ shares: true }).filter((n) => isShare(n));
+
+// Commands that accept a share name as their project argument.
+export const SHARE_COMMANDS = new Set(['down', 'destroy', 'restart', 'status', 'logs']);
 
 const ACTIONS = { dashboard: ['up', 'down', 'status'], service: ['install', 'uninstall', 'status'], completion: ['bash', 'zsh'] };
 
@@ -33,6 +40,7 @@ export function describe(program) {
         description: c.description(),
         options: c.options.map((o) => o.long).filter(Boolean).concat('--help'),
         projectArg: first === 'project',
+        shares: first === 'project' && SHARE_COMMANDS.has(c.name()),
         actions: ACTIONS[c.name()] || [],
       };
     });
@@ -42,7 +50,7 @@ export function bashScript(cmds) {
   const cases = cmds.map((c) => {
     const opts = c.options.join(' ');
     let words = '';
-    if (c.projectArg) words = '$(burrow __complete projects 2>/dev/null)';
+    if (c.projectArg) words = `$(burrow __complete ${c.shares ? 'targets' : 'projects'} 2>/dev/null)`;
     else if (c.actions.length) words = c.actions.join(' ');
     return `    ${c.name})
       if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W "${opts}" -- "$cur") )
@@ -73,7 +81,7 @@ export function zshScript(cmds) {
   const cases = cmds.map((c) => {
     const opts = c.options.map(zq).join(' ');
     let words = '';
-    if (c.projectArg) words = 'compadd -- ${(f)"$(burrow __complete projects 2>/dev/null)"}';
+    if (c.projectArg) words = `compadd -- \${(f)"$(burrow __complete ${c.shares ? 'targets' : 'projects'} 2>/dev/null)"}`;
     else if (c.actions.length) words = `compadd -- ${c.actions.join(' ')}`;
     return `    ${c.name})
       if [[ $words[CURRENT] == -* ]]; then compadd -- ${opts}
@@ -112,5 +120,8 @@ export function completion(shell, program) {
 }
 
 export function complete(what) {
+  // projects: tunnel.yml projects only; targets: projects and shares; shares: shares only.
   if (what === 'projects') for (const p of projectNames()) console.log(p);
+  if (what === 'targets') for (const p of projectNames({ shares: true })) console.log(p);
+  if (what === 'shares') for (const p of shareNamesForCompletion()) console.log(p);
 }

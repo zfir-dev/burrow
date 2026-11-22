@@ -9,6 +9,7 @@
     "dns",
     "cli"
   ],
+  "repository": "github:zfir-dev/burrow",
   "type": "module",
   "bin": {
     "burrow": "bin/burrow.js"
@@ -31,6 +32,7 @@
     "@alpinejs/csp": "3.17.5",
     "@picocss/pico": "2.1.1",
     "commander": "^12.1.0",
+    "qrcode-generator": "2.0.4",
     "yaml": "^2.9.1"
   }
 }
