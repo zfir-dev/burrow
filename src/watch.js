@@ -9,6 +9,7 @@ import { tunnelName } from './naming.js';
 import { DASHBOARD_PROJECT, dashboardProject, loadProjectFile } from './project.js';
 import { localProjects, readMeta, readPid, runningPid } from './process.js';
 import { isShare } from './share.js';
+import { recordEvent } from './history.js';
 import { unitDir } from './service.js';
 
 const log = (...a) => console.log(...a);
@@ -174,6 +175,10 @@ async function tick(args, { debounce, dry, verbose }) {
     const { next: st, change } = evaluate(prev[project], r.status, debounce);
     next[project] = st;
     if (verbose) log(`${project}: ${r.status}${r.problems.length ? ` (${r.problems.join('; ')})` : ''}${st.pending ? ` [${st.pending} ${st.count}/${debounce}]` : ''}`);
+    if (change && !dry) {
+      // Health transitions go to the event history too (the dashboard's uptime timeline reads them).
+      recordEvent({ action: 'health', project, source: 'watch', ok: change.to === 'ok', detail: `${change.to}${r.problems.length ? `: ${r.problems.join('; ')}` : ''} (was ${change.from})` });
+    }
     if (change) await sendAlert({ ...change, project, problems: r.problems, hostnames: r.hostnames, at: Date.now() }, s, { dry });
   }
   writeState(next);

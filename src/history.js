@@ -11,7 +11,7 @@ import { findProjectFile, loadProjectFile } from './project.js';
 export const historyFile = () => join(stateDir(), 'history', 'events.jsonl');
 export const MAX_BYTES = 1024 * 1024;
 export const KEEP_LINES = 2000;
-export const SOURCES = ['cli', 'dashboard', 'boot'];
+export const SOURCES = ['cli', 'dashboard', 'boot', 'watch'];
 
 export const sourceFromEnv = (env = process.env, fallback = 'cli') =>
   (SOURCES.includes(env.BURROW_SOURCE) ? env.BURROW_SOURCE : fallback);

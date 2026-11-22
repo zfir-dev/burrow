@@ -435,7 +435,17 @@ remembered project instead of `./tunnel.yml`.
 
 ### Uptime timeline
 
-_Not merged yet (`feature/ui-uptime`)._
+**Uptime** in the toolbar shows a bar per project for the last hour, 24 hours or 7 days. Each
+bar is coloured **up**, **degraded**, **down**, **stopped** (on purpose) or **no data**, with
+the uptime percentage and the latest incidents. The bar is built from the event history: starts,
+stops and restarts from the CLI and the dashboard, plus health changes that `burrow watch`
+records (action `health`, source `watch`, e.g. `down: cloudflared is not running (was ok)`).
+The current state comes from the watch state, or from whether cloudflared is running.
+
+Stopped time and time with no data don't count against the percentage. Without
+`burrow watch`, a crash only shows from the moment the dashboard sees cloudflared isn't
+running. `GET /api/uptime?window=1h|24h|7d` returns
+`projects: [{project, segments: [{from, to, status, pct}], uptimePct, incidents}]`.
 
 ### Sessions and two-factor sign-in
 
