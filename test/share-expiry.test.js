@@ -55,7 +55,7 @@ test('share --expires: saved for detached shares, shown in --dry-run, bad values
   const before = Date.now();
   r = await sb.run(['share', '8080', '--name', 'acme-demo', '--expires', '2h', '--detach']);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /Expires at .*the dashboard stops it then/);
+  assert.match(r.stdout, /Expires at .*a background watcher removes it then/);
   const left = Date.parse(meta('acme-demo').expiresAt) - before;
   assert.ok(left > 2 * 3600e3 - 60e3 && left <= 2 * 3600e3 + 60e3, String(left));
   r = await sb.run(['down', 'share-acme-demo']);
