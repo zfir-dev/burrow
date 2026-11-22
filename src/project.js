@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import YAML from 'yaml';
-import { assertLabel, hostnameFor } from './naming.js';
+import { assertDomain, assertLabel, hostnameFor } from './naming.js';
 
 export const DEFAULT_FILE = 'tunnel.yml';
 
@@ -49,6 +49,11 @@ export function parseProject(text, source = 'tunnel.yml') {
   const project = String(doc.project ?? '').trim();
   assertLabel(project, `project name in ${source}`);
   if (project === DASHBOARD_PROJECT) throw new Error(`${source}: "${DASHBOARD_PROJECT}" is reserved for the dashboard`);
+  let domain;
+  if (doc.domain !== undefined && doc.domain !== null && doc.domain !== '') {
+    domain = String(doc.domain).trim().toLowerCase().replace(/\.$/, '');
+    try { assertDomain(domain); } catch { throw new Error(`${source}: invalid domain "${doc.domain}" (e.g. domain: example.org)`); }
+  }
   if (!Array.isArray(doc.services) || doc.services.length === 0) {
     throw new Error(`${source}: "services" must be a non-empty list`);
   }
@@ -69,12 +74,21 @@ export function parseProject(text, source = 'tunnel.yml') {
     });
     const svc = { name, root, url: s.url, paths };
     if (s.originRequest) svc.originRequest = s.originRequest;
+    if (s.private !== undefined && typeof s.private !== 'boolean') throw new Error(`${where}: "private" must be true or false`);
+    if (s.private) svc.private = true;
+    if (s.allow !== undefined) {
+      if (!s.private) throw new Error(`${where}: "allow" only applies with private: true`);
+      const allow = (Array.isArray(s.allow) ? s.allow : String(s.allow).split(',')).map((e) => String(e).trim().toLowerCase()).filter(Boolean);
+      const bad = allow.filter((e) => !/^[^@\s,]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(e) && !/^@[a-z0-9.-]+\.[a-z]{2,}$/.test(e));
+      if (bad.length) throw new Error(`${where}: invalid "allow" entries ${bad.join(', ')} (use emails or @domain)`);
+      svc.allow = allow;
+    }
     const key = root ? '@root' : name;
     if (seen.has(key)) throw new Error(`${where}: duplicate ${root ? 'root service' : `service "${name}"`}`);
     seen.add(key);
     return svc;
   });
-  return { project, services, source, autostart: doc.autostart === true };
+  return { project, services, source, autostart: doc.autostart === true, ...(domain ? { domain } : {}) };
 }
 
 export function hostnames(proj, domain) {

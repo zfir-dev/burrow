@@ -38,3 +38,7 @@ Project acme-shop (/home/me/code/acme-shop/tunnel.yml)
 - **Projects:** opens a TCP connection to every service and path target. It checks
   `burrow doctor <project>`, `-f <file>`, or `./tunnel.yml`; with none of those, every project
   burrow remembers.
+
+`--json` prints the report as one line of JSON (`counts` and `checks`, each with `section`,
+`status`, `label`, `detail` and, for warnings and failures, a `fix` hint). `--all` checks every
+remembered project and ignores `./tunnel.yml`. The dashboard's **Doctor** panel uses both.

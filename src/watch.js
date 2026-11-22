@@ -114,12 +114,15 @@ async function post(url, body, headers) {
 }
 
 // Never prints the webhook URL or the ntfy token: both are secrets.
-export async function sendAlert(a, s, { dry = false } = {}) {
+// `report` gets delivery failures (the dashboard shows them); returns how many failed.
+export async function sendAlert(a, s, { dry = false, report = (m) => console.error(m) } = {}) {
+  let failed = 0;
   log(`${dry ? '[dry-run] ' : ''}alert: ${alertText(a)}`);
-  if (dry) return;
+  if (dry) return 0;
   if (s.webhook) {
     try { await post(s.webhook, JSON.stringify(webhookBody(s.webhook, a)), { 'Content-Type': 'application/json' }); } catch (e) {
-      console.error(`burrow: webhook alert failed: ${e.name === 'TimeoutError' ? 'timed out' : e.message}`);
+      failed++;
+      report(`burrow: webhook alert failed: ${e.name === 'TimeoutError' ? 'timed out' : e.message}`);
     }
   }
   if (s.ntfy) {
@@ -133,9 +136,11 @@ export async function sendAlert(a, s, { dry = false } = {}) {
     if (s.ntfyToken) headers.Authorization = `Bearer ${s.ntfyToken}`;
     const body = [alertText(a), ...a.hostnames.map((h) => `https://${h}`)].join('\n');
     try { await post(url, body, headers); } catch (e) {
-      console.error(`burrow: ntfy alert failed: ${e.name === 'TimeoutError' ? 'timed out' : e.message}`);
+      failed++;
+      report(`burrow: ntfy alert failed: ${e.name === 'TimeoutError' ? 'timed out' : e.message}`);
     }
   }
+  return failed;
 }
 
 function readState() { try { return JSON.parse(readFileSync(watchStateFile(), 'utf8')); } catch { return {}; } }
