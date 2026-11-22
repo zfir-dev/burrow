@@ -378,7 +378,22 @@ Server state lives in `~/.local/state/burrow/dashboard/server.{pid,log}`. A bare
 
 ### Live updates
 
-_Not merged yet (`feature/ui-live`)._
+The page keeps itself current over a server-sent event stream (`GET /api/stream`) instead of
+polling. While at least one page is open, the dashboard rebuilds the project list every 3
+seconds and pushes `changed` when anything differs (the page then reloads the list), or a
+`tick` with the server clock otherwise. Actions taken from the dashboard trigger a check right
+away. The toolbar shows **Live**, **Connecting** or **Polling**.
+
+The stream needs a signed-in session like every other endpoint. Each stream closes after 5
+minutes and the page reconnects, so a signed-out session stops getting updates. If the stream
+fails twice in a row, the page polls every 5 seconds and keeps retrying with backoff (up to 30
+seconds). At most 20 streams are open at once; extra pages get `503` and poll.
+
+| Variable | Default | Does |
+| --- | --- | --- |
+| `BURROW_DASHBOARD_LIVE` | on | `off` turns the stream off; pages poll every 5 seconds |
+| `BURROW_LIVE_MS` | `3000` | How often the server checks for changes |
+| `BURROW_LIVE_MAX_CLIENTS` | `20` | Open streams allowed at once |
 
 ### Shares
 

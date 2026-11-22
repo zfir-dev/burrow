@@ -155,6 +155,15 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
   const panelCtx = (req, res, url) => ({
     req, res, url, method: req.method, path: url.pathname, log, events, withBusy, runCli, loadConfig,
     invalidate: invalidateCloudflare,
+    // The /api/tunnels payload (with every panel's enrich), for panels that push updates.
+    async snapshot() {
+      const data = await collect(loadConfig());
+      for (const p of (await ready).list) {
+        if (!p.enrich) continue;
+        try { await p.enrich(data.projects, this); } catch (e) { log(`error: panel ${p.id}: ${e.message}`); }
+      }
+      return data;
+    },
     clientIp: clientIp(req),
     json: (status, obj, extra) => json(res, status, obj, extra),
     send: (status, body, type, extra) => send(res, status, body, type, extra),
