@@ -443,7 +443,17 @@ on the server to turn two-factor off ([details](docs/two-factor.md)).
 
 ### Backup and restore
 
-_Not merged yet (`feature/ui-backup`)._
+**Backup** in the top bar has **Download backup**: a `burrow export` bundle of every remembered
+project (`burrow-projects-<date>.yml`), with `tunnel.yml` settings only. Tokens, passwords and
+`hooks:` are never in it, and temporary shares aren't either.
+
+To restore, pick a backup file. Before anything is written, the server lists each project in it
+with what would happen: **new**, **file exists** or **already remembered** (somewhere else), or
+**invalid**, plus the hostnames it would get. New projects are ticked; existing ones can only be
+picked with **Replace projects that already exist**. **Restore** asks you to type `restore`; the
+server plans again and writes the picked projects to `~/.config/burrow/projects/<project>.tunnel.yml`
+and remembers them, like `burrow import` (with `--force` for replaced ones). Nothing is started:
+use **Up** afterwards. Backups are limited to 1 MB.
 
 ### Hooks and updates
 
