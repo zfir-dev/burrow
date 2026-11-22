@@ -2,16 +2,37 @@
 // with an expiry, list the shares this machine has, extend them, or stop them (which deletes
 // the hostname, tunnel and DNS record, like `burrow down share-<name>`). Expired shares are
 // stopped by the dashboard; one that expired while it was off is stopped when it starts.
+// Shares started in a terminal (`burrow share`, also with --expires) are listed too: the state
+// file is shared, so extending one changes the expiry that process checks, and stopping one
+// asks that process to remove it (it checks every 2 s); if it's gone, `burrow down` does it.
 import { readdirSync } from 'node:fs';
 import { assertLabel } from '../../naming.js';
 import { loadConfig, stateDir } from '../../config.js';
 import { readMeta, runningPid, saveMeta } from '../../process.js';
-import { SHARE_PREFIX, isShare, randomLabel, targetUrl } from '../../share.js';
+import { SHARE_PREFIX, isShare, randomLabel, targetUrl, ownerAlive, requestStop } from '../../share.js';
 import { runCli } from '../server.js';
 
 export const order = 35;
 export const EXPIRY_MINUTES = [15, 60, 240, 1440, 10080]; // 15 min … 7 days; 0 = never
 const SWEEP_MS = 30 * 1000;
+const HANDOFF_MS = Number(process.env.BURROW_SHARE_HANDOFF_MS) || 10 * 1000;
+
+// Stop one share. A terminal-owned share is asked to stop itself (so its Ctrl+C cleanup and
+// event history run there); if that process doesn't finish in time, or is gone, `burrow down`.
+export async function stopShare(project, { run = runCli, wait = HANDOFF_MS } = {}) {
+  const meta = readMeta(project);
+  if (!meta) return { ok: true, output: `${project} is already gone` };
+  if (ownerAlive(meta)) {
+    requestStop(project);
+    const until = Date.now() + wait;
+    while (Date.now() < until) {
+      if (!readMeta(project)) return { ok: true, output: `Asked the terminal "burrow share" (pid ${meta.ownerPid}) to stop; it removed ${meta.hostname}.` };
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (!readMeta(project)) return { ok: true, output: `Removed ${meta.hostname}` };
+  }
+  return run(['down', project]);
+}
 
 export function listShares(now = Date.now()) {
   let names = [];
@@ -22,7 +43,7 @@ export function listShares(now = Date.now()) {
     return {
       project, label: project.slice(SHARE_PREFIX.length), hostname: m.hostname, target: m.target,
       createdAt: m.createdAt || null, expiresAt, expired: !!expiresAt && Date.parse(expiresAt) <= now,
-      running: !!runningPid(project), foreground: !!m.ownerPid,
+      running: !!runningPid(project), foreground: ownerAlive(m),
     };
   });
 }
@@ -39,10 +60,11 @@ const sweeping = new Set();
 export async function sweepExpired({ now = Date.now(), run = runCli, onStopped = () => {} } = {}) {
   const stopped = [];
   for (const s of listShares(now)) {
-    if (!s.expired || s.foreground || sweeping.has(s.project)) continue;
+    // A terminal-owned share stops itself at its expiry; this only catches the rest.
+    if (!s.expired || sweeping.has(s.project)) continue;
     sweeping.add(s.project);
     try {
-      const r = await run(['down', s.project]);
+      const r = await stopShare(s.project, { run });
       stopped.push({ project: s.project, ok: r.ok });
       onStopped(s, r);
     } finally { sweeping.delete(s.project); }
@@ -113,9 +135,6 @@ export async function route(ctx) {
   try { assertLabel(project, 'share'); } catch { return ctx.json(400, { error: 'bad share' }) ?? true; }
   if (!project.startsWith(SHARE_PREFIX) || !isShare(project)) return ctx.json(404, { error: `${project} is not a share` }) ?? true;
   const meta = readMeta(project);
-  if (meta.ownerPid) {
-    return ctx.json(409, { error: `${project} belongs to a "burrow share" running in a terminal; stop it there with Ctrl+C` }) ?? true;
-  }
   if (action === 'extend') {
     let minutes;
     try { minutes = parseExpiry(body.expiresIn); } catch (e) { return ctx.json(400, { error: e.message }) ?? true; }
@@ -125,7 +144,7 @@ export async function route(ctx) {
   if (body.confirm !== true) return ctx.json(400, { error: 'confirm stopping the share (confirm: true)' }) ?? true;
   const r = await ctx.withBusy(project, async () => {
     ctx.log(`stop share ${project} (requested from ${ctx.clientIp})`);
-    const run = await ctx.runCli(['down', project]);
+    const run = await stopShare(project, { run: ctx.runCli });
     ctx.invalidate();
     return run;
   });
@@ -164,8 +183,8 @@ export const html = {
           <td><code x-text="s.target"></code></td>
           <td><small x-text="shareExpires(s)"></small></td>
           <td><div class="actions">
-            <button class="secondary outline" :disabled="s.foreground" @click="extendShare(s)">+1 hour</button>
-            <button class="danger outline" :disabled="s.foreground" :title="shareStopTitle(s)" @click="askStopShare(s)">Stop</button>
+            <button class="secondary outline" @click="extendShare(s)">+1 hour</button>
+            <button class="danger outline" :title="shareStopTitle(s)" @click="askStopShare(s)">Stop</button>
           </div></td>
         </tr>
       </template>
@@ -204,7 +223,7 @@ burrowPanel(function () {
     shareUrl: function (s) { return 'https://' + s.hostname; },
     shareState: function (s) { return s.running ? (s.foreground ? 'terminal' : 'live') : 'stopped'; },
     shareStateClass: function (s) { return s.running ? 'ok' : 'bad'; },
-    shareStopTitle: function (s) { return s.foreground ? 'Started with "burrow share" in a terminal: stop it there with Ctrl+C' : ''; },
+    shareStopTitle: function (s) { return s.foreground ? 'Started with "burrow share" in a terminal: that process is asked to stop and remove it' : ''; },
     shareExpires: function (s) {
       if (!s.expiresAt) return s.foreground ? 'when the terminal stops' : 'never';
       var left = Date.parse(s.expiresAt) - Date.now();
