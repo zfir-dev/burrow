@@ -187,6 +187,8 @@ header nav button,header nav a[role=button]{padding:.35rem .75rem;font-size:.875
   table.projects td.col-local,table.projects td.col-conn{max-width:none;min-width:0}
   table.projects .col-uptime{display:block}
   table.projects td.col-uptime:not(:empty)::before{content:"up ";color:var(--pico-muted-color)}
+  table.projects td[data-label]{display:flex;align-items:center;gap:.35rem}
+  table.projects td[data-label]::before{content:attr(data-label);color:var(--pico-muted-color);font-size:.85rem}
   table.projects .host a{max-width:none}
   .actions{justify-content:flex-start;flex-wrap:wrap}
 }
