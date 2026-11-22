@@ -153,5 +153,11 @@ program.command('doctor [project]')
   .option('-f, --file <path>', 'path to tunnel.yml')
   .option('--offline', 'skip the Cloudflare API checks')
   .action(wrap(async (p, o) => (await import('../src/doctor.js')).doctor(p, o)));
+program.command('stats [project]')
+  .description('requests, bandwidth and status codes per hostname (Cloudflare GraphQL Analytics)')
+  .option('-f, --file <path>', 'path to tunnel.yml')
+  .option('--since <window>', 'time window: 30m, 24h, 7d or an ISO date', '24h')
+  .option('--json', 'machine-readable output')
+  .action(wrap(async (p, o) => (await import('../src/stats.js')).stats(p, o)));
 
 await program.parseAsync();

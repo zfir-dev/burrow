@@ -56,6 +56,7 @@ versions. The systemd unit (if you use one) records the Node binary path when it
 2. Create an API token at **My Profile > API Tokens > Create Token > Custom token**:
    - **Account > Cloudflare Tunnel > Edit**
    - **Zone > DNS > Edit**, limited to the tunnel domain's zone
+   - optional **Zone > Analytics > Read**, only for `burrow stats`
    - optional **Zone > Zone > Read**, only if you leave `CF_ZONE_ID` empty (used to look up the zone ID)
 3. Run `burrow init`. It writes `~/.config/burrow/config.env` (mode 600):
 
@@ -132,6 +133,7 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | `burrow dashboard status`        | Server, connector, URL, whether a password is set |
 | `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state (`--json` for a machine-readable array) |
 | `burrow status [project]`        | Local process, tunnel health, DNS records (`--json` for an object with `running`, `pid`, `tunnel`, `records`) |
+| `burrow stats [project]`         | Requests, bandwidth and 2xx/3xx/4xx/5xx counts per hostname from Cloudflare's GraphQL Analytics (`--since 24h`, `--json`). Needs **Zone > Analytics > Read** ([details](docs/stats.md)) |
 | `burrow logs [project]`          | Show the cloudflared log (`-n 200`, `--follow`) |
 
 `destroy` with no project and no `--all` refuses to run.
