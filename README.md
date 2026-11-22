@@ -259,7 +259,17 @@ _Not merged yet (`feature/ui-access`)._
 
 ### Doctor
 
-_Not merged yet (`feature/ui-doctor`)._
+**Doctor** in the top bar runs `burrow doctor --json --all` on the server and lists every check
+with a **pass**, **warning**, **fail** or **skipped** badge: the config file and its permissions,
+`CF_API_TOKEN`, `CF_ACCOUNT_ID`, `BURROW_DOMAIN`, the token, zone, tunnel and DNS permissions
+(through the Cloudflare API), cloudflared, and the local services of every remembered project.
+Problems come with a **Fix** line (for example `chmod 600 …`, which token permission to add, or
+which local URL to start). **Skip Cloudflare API checks** runs it offline. The last report is kept
+until the dashboard restarts; one run at a time. Secrets are never part of the report.
+
+On the command line, `burrow doctor --json` prints the same report as one JSON line
+(`{ counts, checks: [{ section, status, label, detail, fix }] }`), and `--all` checks every
+remembered project instead of `./tunnel.yml`.
 
 ### Uptime timeline
 
