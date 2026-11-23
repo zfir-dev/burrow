@@ -40,7 +40,8 @@ hooks:
   background process. `down` and `destroy` stop it.
 - `down` runs `pre_down`/`post_down` only for projects with something running. It uses the
   `tunnel.yml` remembered by the last `up`, so `burrow down` from any directory works.
-- `--no-hooks` on `up` or `down` skips the hooks. `down --no-hooks` still stops a background
+- `--no-hooks` on `up`, `restart` or `down` skips the hooks (`restart --no-hooks` with no
+  project skips them for every running project). `down --no-hooks` still stops a background
   `pre_up` process. `--dry-run` lists the hooks that would run. `destroy` runs no hooks.
 - Hooks are never copied by `burrow export`, so an imported bundle can't carry commands.
 - Each run is recorded in `~/.local/state/burrow/hooks/results.jsonl` (time, project, hook,

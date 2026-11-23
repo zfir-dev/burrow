@@ -12,6 +12,11 @@ export const order = 50;
 // a panel never makes the table wider; keep labels short ("Edit", "Stats", "Restart").
 // rowCols cells should carry data-label="…": it's shown in front of the cell when rows
 // become cards on small screens (where the table header is hidden).
+// toolbar items are <li><button>…</button></li> listed in the top bar's "More" menu (one
+// per panel that opens a section). toolbarMain is for the few items that must stay visible
+// in the top bar (a status, "New project", buttons that only show in some states); keep it
+// small so the top bar fits on one row at 1280px.
+// rowBadges wrap under the project name, so keep them to one short word.
 export const html = { toolbar: '<li>…</li>', sections: '<article>…</article>' };
 
 // Browser JS, served in /panels.js after /app.js. It registers a mixin that is merged
@@ -30,6 +35,11 @@ export async function enrich(projects, ctx) {}
 // Handle a request. Runs only for signed-in sessions, and POSTs already carry the
 // X-Burrow CSRF header. Return true when the request was answered.
 export async function route(ctx) { return false; }
+
+// Background work that should run with no browser open (e.g. timers). Called once when the
+// server starts listening, with { log, events, loadConfig, invalidate, runCli, collect };
+// return a function that stops it (called when the server closes). unref() your timers.
+export function start(ctx) { return () => {}; }
 ```
 
 `ctx` has `req`, `res`, `method`, `path`, `url` (URL), `json(status, obj)`, `send(status, body, type, headers)`,

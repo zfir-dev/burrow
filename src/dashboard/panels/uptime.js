@@ -1,11 +1,27 @@
 // Panel: uptime timeline. A bar per project for the last hour, day or week, built from the
 // event history (starts and stops from the CLI and dashboard, health transitions recorded
-// by `burrow watch`) and what the project is doing now; plus the uptime % and incidents.
+// by `burrow watch`, or by the dashboard itself while watch isn't running) and what the project
+// is doing now; plus the uptime % and incidents.
 import { collect } from '../data.js';
 import { readPid } from '../../process.js';
 import { timelines, WINDOWS } from '../../uptime.js';
+import { observe } from '../../health-observer.js';
 
 export const order = 65;
+const OBSERVE_MS = 60 * 1000;
+
+// Without `burrow watch`, the dashboard records the health changes it sees (health-observer.js):
+// on every refresh of the project list, and once a minute with no browser open.
+export async function enrich(projects) {
+  try { observe(projects); } catch {}
+}
+export function start(ctx) {
+  const tick = async () => { try { observe((await ctx.collect()).projects); } catch {} };
+  const timer = setInterval(tick, OBSERVE_MS);
+  const first = setTimeout(tick, 10 * 1000);
+  timer.unref?.(); first.unref?.();
+  return () => { clearInterval(timer); clearTimeout(first); };
+}
 
 export async function route(ctx) {
   if (ctx.method !== 'GET' || ctx.path !== '/api/uptime') return false;
@@ -51,7 +67,7 @@ export const html = {
   </template>
   <p class="uptime-legend"><small><span class="seg seg-up"></span> up <span class="seg seg-degraded"></span> degraded
     <span class="seg seg-down"></span> down <span class="seg seg-stopped"></span> stopped <span class="seg seg-unknown"></span> no data</small></p>
-  <p><small class="muted">Health changes are recorded while <code>burrow watch</code> runs; without it the bar only shows starts and stops.</small></p>
+  <p><small class="muted">Health changes come from <code>burrow watch</code> when it runs; without it the dashboard records the crashes and tunnel outages it sees (checked every minute).</small></p>
 </article>`,
 };
 

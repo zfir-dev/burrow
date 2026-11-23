@@ -4,7 +4,7 @@ import { Cloudflare } from '../cloudflare.js';
 import { recordComment, tunnelName } from '../naming.js';
 import { localProjects, runningPid, pidFile, readMeta } from '../process.js';
 import { DASHBOARD_PROJECT } from '../project.js';
-import { recordsEverywhere } from '../zones.js';
+import { recordsEverywhere, zoneErrorCollector, zoneErrorFor } from '../zones.js';
 
 function metaProjects() {
   try {
@@ -24,8 +24,10 @@ async function cloudflareState(cfg) {
   if (Date.now() - cache.at < 10000) return cache;
   try {
     const cf = new Cloudflare({ token: cfg.token, accountId: cfg.accountId, zoneId: cfg.zoneId });
-    const [tunnels, records] = await Promise.all([cf.listTunnels(), recordsEverywhere(cf, cfg, { prefix: 'burrow:' })]);
-    cache = { at: Date.now(), data: { tunnels: tunnels.filter((t) => t.name.startsWith('burrow-')), records }, error: null };
+    // One unreadable zone doesn't blank the table: its projects get zoneError instead.
+    const zones = zoneErrorCollector();
+    const [tunnels, records] = await Promise.all([cf.listTunnels(), recordsEverywhere(cf, cfg, { prefix: 'burrow:', onError: zones.onError })]);
+    cache = { at: Date.now(), data: { tunnels: tunnels.filter((t) => t.name.startsWith('burrow-')), records, zoneErrors: zones.list }, error: null };
   } catch (e) {
     cache = { at: Date.now(), data: null, error: e.message };
   }
@@ -44,10 +46,12 @@ export async function collect(cfg) {
     if (pid) { try { startedAt = statSync(pidFile(project)).mtimeMs; } catch {} }
     const tunnel = cf.data?.tunnels.find((t) => t.name === tunnelName(project)) || null;
     const recs = (cf.data?.records || []).filter((r) => r.comment === recordComment(project)).map((r) => r.name);
+    const zoneError = project === DASHBOARD_PROJECT ? null : zoneErrorFor(project, cf.data?.zoneErrors, cfg);
     return {
       project,
       builtIn: project === DASHBOARD_PROJECT,
       hostnames: recs.length ? recs.sort() : meta?.hostnames || [],
+      zoneError,
       running: !!pid,
       pid,
       startedAt,
@@ -61,5 +65,6 @@ export async function collect(cfg) {
       },
     };
   });
-  return { projects, cloudflare: { configured: !!cf.data || cf.error !== 'Cloudflare not configured', error: cf.error }, now: Date.now() };
+  const zoneErrors = (cf.data?.zoneErrors || []).map(({ zone, error }) => ({ zone, error }));
+  return { projects, cloudflare: { configured: !!cf.data || cf.error !== 'Cloudflare not configured', error: cf.error, zoneErrors }, now: Date.now() };
 }
