@@ -34,6 +34,12 @@ The unit (`~/.config/systemd/user/burrow.service`) is a `Type=oneshot` service w
   process it started. Connectors, the dashboard, shares and their expiry watchers are detached
   children of the unit, so without it `systemctl --user stop|restart burrow` (or an upgrade
   that restarts it) would kill them all, shares included.
+- when `systemd-run` is installed, `ExecStart` is `systemd-run --user --scope ... burrow autostart`.
+  The boot command (and so every connector, dashboard, share and expiry watcher it starts) runs in
+  its own transient scope, outside the unit's cgroup. With `KillMode=process` alone systemd would
+  warn about those leftover processes on every stop or restart; with the scope it has none to
+  warn about. Without `systemd-run` the unit is written as before (no scope).
+  `ExecStop` is not scoped.
 - `PATH`, `BURROW_CONFIG` and `BURROW_STATE_DIR` are copied into the unit so it finds
   `cloudflared` and your config
 
@@ -45,6 +51,10 @@ Units written before this change have no `KillMode=process` and stop with plain 
 and reloads systemd; it doesn't restart anything, and the new stop behaviour applies from the
 next stop or restart.
 
+A unit that has `KillMode=process` but no scope is also reported **Outdated** when `systemd-run`
+is available (different message: it only affects the leftover-process warning). Run
+`burrow service install` to update it.
+
 `burrow watch --install-service` starts no child processes, so its unit keeps the default.
 
 User units only start at boot without a login session when lingering is on. `install` and
@@ -52,4 +62,4 @@ User units only start at boot without a login session when lingering is on. `ins
 
 `burrow autostart [projects...]` is what the unit runs; `--dry-run` shows the list.
 For tests, `BURROW_SYSTEMD_DIR` and `BURROW_SYSTEMCTL` override the unit directory and
-the `systemctl` binary.
+the `systemctl` binary, and `BURROW_SYSTEMD_RUN` the `systemd-run` binary (`none` turns the scope off).
