@@ -118,6 +118,7 @@ program.command('down [project]')
   .option('-y, --yes', 'with --purge --all: skip the confirmation')
   .option('--dry-run', 'print what would happen')
   .option('--no-hooks', 'skip pre_down/post_down (a background pre_up process is still stopped)')
+  .option('--keep-shares', 'with no project: leave temporary shares running (used by the boot service)')
   .action(wrap((p, o) => cmd.down(p, o)));
 program.command('restart [project]')
   .description('re-sync and restart a project (all running projects when none is given)')

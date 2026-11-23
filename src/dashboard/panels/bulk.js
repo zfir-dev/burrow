@@ -7,7 +7,7 @@ import YAML from 'yaml';
 import { assertLabel } from '../../naming.js';
 import { parseProject, DASHBOARD_PROJECT } from '../../project.js';
 import { readMeta } from '../../process.js';
-import { autostartProjects, unitPath, UNIT_NAME } from '../../service.js';
+import { autostartProjects, unitPath, unitOutdated, UNIT_NAME } from '../../service.js';
 
 export const order = 90;
 const MAX_BULK = 50;
@@ -37,7 +37,7 @@ function unitState(fresh = false) {
     const r = spawnSync(process.env.BURROW_SYSTEMCTL || 'systemctl', ['--user', ...a, UNIT_NAME], { encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL' });
     return r.error ? 'unknown' : (r.stdout || '').trim() || 'unknown';
   };
-  unitCache = { at: Date.now(), data: { installed: existsSync(unitPath()), enabled: run('is-enabled'), active: run('is-active') } };
+  unitCache = { at: Date.now(), data: { installed: existsSync(unitPath()), outdated: unitOutdated(), enabled: run('is-enabled'), active: run('is-active') } };
   return unitCache.data;
 }
 
@@ -138,8 +138,8 @@ export const html = {
   <article>
     <header><strong>Uninstall the boot service?</strong></header>
     <p>This disables and removes <code>burrow.service</code>. systemd runs its stop command, which is
-      <code>burrow down</code>: <strong>every running connector stops</strong>, the dashboard's own tunnel included.
-      Tunnels and DNS records are kept.</p>
+      <code>burrow down --keep-shares</code>: <strong>every running connector stops</strong>, the dashboard's own tunnel included;
+      temporary shares keep running. Tunnels and DNS records are kept.</p>
     <footer>
       <button class="secondary" @click="closeUninstallBoot">Cancel</button>
       <button class="danger" @click="uninstallBoot">Uninstall</button>
@@ -221,10 +221,10 @@ burrowPanel(function () {
     loadBoot: async function () { this.bootAt = Date.now(); try { this.boot = await getJson('/api/boot'); } catch (e) {} },
     get bootUnit() { return this.boot.unit; },
     get bootInstalled() { return this.boot.installed; },
-    get bootCanInstall() { return !this.boot.installed || this.boot.active !== 'active'; },
-    get bootInstallLabel() { return this.boot.installed ? 'Start it' : 'Install'; },
-    get bootText() { return this.boot.installed ? this.boot.enabled + ', ' + this.boot.active : 'not installed'; },
-    get bootClass() { return !this.boot.installed ? '' : this.boot.enabled === 'enabled' ? 'ok' : 'warn'; },
+    get bootCanInstall() { return !this.boot.installed || this.boot.outdated || this.boot.active !== 'active'; },
+    get bootInstallLabel() { return !this.boot.installed ? 'Install' : this.boot.outdated ? 'Update' : 'Start it'; },
+    get bootText() { return this.boot.installed ? this.boot.enabled + ', ' + this.boot.active + (this.boot.outdated ? ', outdated' : '') : 'not installed'; },
+    get bootClass() { return !this.boot.installed ? '' : this.boot.enabled === 'enabled' && !this.boot.outdated ? 'ok' : 'warn'; },
     get bootProjectsText() {
       var n = this.boot.projects.length;
       return n ? '· brings up ' + this.boot.projects.join(', ') : '· no projects marked yet';

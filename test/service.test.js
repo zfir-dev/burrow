@@ -14,7 +14,8 @@ test('renderUnit', () => {
   assert.match(unit, /^Type=oneshot$/m);
   assert.match(unit, /^RemainAfterExit=yes$/m);
   assert.match(unit, /^ExecStart=\/opt\/node\/bin\/node \/opt\/burrow\/bin\/burrow\.js autostart acme-shop todo-api$/m);
-  assert.match(unit, /^ExecStop=\/opt\/node\/bin\/node \/opt\/burrow\/bin\/burrow\.js down$/m);
+  assert.match(unit, /^ExecStop=\/opt\/node\/bin\/node \/opt\/burrow\/bin\/burrow\.js down --keep-shares$/m);
+  assert.match(unit, /^KillMode=process$/m, 'stopping the unit leaves its detached children (shares, dashboard) alone');
   assert.match(unit, /^Environment=PATH=\/usr\/bin:\/bin$/m);
   assert.match(unit, /^Environment="BURROW_CONFIG=\/home\/me\/my config\.env"$/m);
   assert.doesNotMatch(unit, /HOME=/);

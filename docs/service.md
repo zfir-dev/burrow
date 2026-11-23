@@ -29,9 +29,23 @@ The unit (`~/.config/systemd/user/burrow.service`) is a `Type=oneshot` service w
 `RemainAfterExit=yes`:
 
 - `ExecStart` runs `burrow autostart` (with the same Node binary you used to install it), which runs `burrow up` for each project
-- `ExecStop` runs `burrow down`
+- `ExecStop` runs `burrow down --keep-shares`: projects stop, temporary shares keep running
+- `KillMode=process`: after `ExecStop`, systemd kills only the unit's main process, not every
+  process it started. Connectors, the dashboard, shares and their expiry watchers are detached
+  children of the unit, so without it `systemctl --user stop|restart burrow` (or an upgrade
+  that restarts it) would kill them all, shares included.
 - `PATH`, `BURROW_CONFIG` and `BURROW_STATE_DIR` are copied into the unit so it finds
   `cloudflared` and your config
+
+### Upgrading an older unit
+
+Units written before this change have no `KillMode=process` and stop with plain `burrow down`.
+`burrow service status` says **Outdated** for them, and the dashboard's boot bar shows
+*outdated* with an **Update** button. `burrow service install` (or **Update**) rewrites the unit
+and reloads systemd; it doesn't restart anything, and the new stop behaviour applies from the
+next stop or restart.
+
+`burrow watch --install-service` starts no child processes, so its unit keeps the default.
 
 User units only start at boot without a login session when lingering is on. `install` and
 `status` tell you when it isn't, and the fix is `loginctl enable-linger $USER`.

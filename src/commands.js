@@ -170,7 +170,8 @@ export async function up(projectArg, opts) {
 export async function down(projectArg, opts) {
   const dry = !!opts.dryRun;
   if (opts.purge) return destroy(projectArg, opts);
-  const projects = projectArg || opts.file ? [resolveName(projectArg, opts)] : localProjects();
+  // --keep-shares (the boot service's stop command): leave temporary shares running.
+  const projects = projectArg || opts.file ? [resolveName(projectArg, opts)] : localProjects().filter((p) => !(opts.keepShares && isShare(p)));
   if (!projects.length) { log('No burrow connectors found.'); return; }
   for (const project of projects) {
     const pid = runningPid(project);
