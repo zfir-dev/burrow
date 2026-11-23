@@ -4,6 +4,7 @@ import { loadConfig, requireConfig, stateDir } from './config.js';
 import { Cloudflare } from './cloudflare.js';
 import { tunnelTarget } from './naming.js';
 import { recordsEverywhere, inZone } from './zones.js';
+import { listPending, retryPending } from './pending.js';
 
 const TUNNEL_PREFIX = 'burrow-';
 const COMMENT_PREFIX = 'burrow:';
@@ -51,8 +52,22 @@ export async function prune(opts = {}) {
   const cfg = loadConfig();
   requireConfig(cfg, ['token', 'accountId', 'domain']);
   const cf = new Cloudflare({ token: cfg.token, accountId: cfg.accountId, zoneId: cfg.zoneId });
+  // DNS deletions queued by an earlier destroy that couldn't read a zone. They were already
+  // asked for, so they're retried without another confirmation.
+  const pending = listPending();
+  if (pending.length && opts.dryRun) {
+    log(`[dry-run] would retry ${pending.length} queued DNS cleanup(s):`);
+    for (const e of pending) log(`  ${e.project}: records tagged "${e.comment}" in ${e.domain} (queued ${e.at}: ${e.error})`);
+  } else if (pending.length) {
+    log(`Retrying ${pending.length} queued DNS cleanup(s):`);
+    const r = await retryPending(cf, { log: (l) => log(`  ${l}`) });
+    if (r.left.length) process.exitCode = 1;
+  }
   const tunnels = (await cf.listTunnels()).filter((t) => t.name.startsWith(TUNNEL_PREFIX));
-  const records = await recordsEverywhere(cf, cfg, { prefix: COMMENT_PREFIX });
+  const records = await recordsEverywhere(cf, cfg, {
+    prefix: COMMENT_PREFIX,
+    onError: (z, e) => console.error(`burrow: warning: couldn't read DNS in ${z.domain} (${e.message}); skipped it.`),
+  });
   const { orphanTunnels, orphanRecords, skipped } = findOrphans({
     tunnels, records, local: localProjectNames(), includeActive: !!opts.includeActive,
   });

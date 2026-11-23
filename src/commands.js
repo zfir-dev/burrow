@@ -15,6 +15,7 @@ import {
 } from './process.js';
 import { runHook, hookContext, beforeDown, afterDown, stopBackground } from './hooks.js';
 import { isShare, removeShare } from './share.js';
+import { addPending } from './pending.js';
 
 const log = (...a) => console.log(...a);
 const step = (dry, msg) => log(`${dry ? '[dry-run] ' : ''}${msg}`);
@@ -216,7 +217,14 @@ async function destroyOne(cf, project, dry) {
   const bg = await stopBackground(project);
   if (bg) log(`${project}: stopped pre_up background process (pid ${bg})`);
   log(stopped ? `${project}: stopped cloudflared (pid ${stopped})` : `${project}: cloudflared was not running`);
-  for (const r of await recordsEverywhere(cf, loadConfig(), { comment })) {
+  // A zone that can't be read now (token lost access, Cloudflare error) doesn't stop the
+  // rest: the deletion is queued and retried by `burrow prune` or the dashboard's Cleanup.
+  const unread = (z, e) => {
+    addPending({ zoneId: z.id, domain: z.domain, comment, project, error: e.message });
+    console.error(`burrow: warning: ${project}: couldn't read DNS in ${z.domain} (${e.message}); ` +
+      `its records there are queued for deletion. Run "burrow prune" to retry.`);
+  };
+  for (const r of await recordsEverywhere(cf, loadConfig(), { comment, onError: unread })) {
     await inZone(cf, r.zoneId).deleteRecord(r.id);
     log(`${project}: deleted DNS ${r.type} ${r.name}`);
   }
@@ -255,7 +263,9 @@ export async function destroy(projectArg, opts) {
   requireConfig(cfg, ['token', 'accountId']);
   const cf = client(cfg);
   const tunnels = (await cf.listTunnels()).filter((t) => t.name.startsWith('burrow-'));
-  const records = await recordsEverywhere(cf, cfg, { prefix: 'burrow:' });
+  const unreadable = [];
+  const records = await recordsEverywhere(cf, cfg, { prefix: 'burrow:', onError: (z) => unreadable.push(z.domain) });
+  if (unreadable.length) console.error(`burrow: warning: couldn't read DNS in ${unreadable.join(', ')}; records there are queued per project.`);
   const projects = new Set([
     ...tunnels.map((t) => t.name.slice('burrow-'.length)),
     ...records.map((r) => r.comment.slice('burrow:'.length)),

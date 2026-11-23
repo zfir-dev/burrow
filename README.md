@@ -129,7 +129,7 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | `burrow restart [project]`       | Re-sync the tunnel config and DNS and restart `cloudflared` (same as `up`, which reuses the tunnel). With no project, restarts every connector that is running now; `--dry-run` shows the plan, `--no-hooks` skips the `pre_up`/`post_up` hooks. Detached shares are restarted on the same hostname, shares still attached to a `burrow share` in the foreground are skipped ([details](docs/share.md#restart-completion-and-export)) |
 | `burrow down`                    | Stop **every** running burrow connector (each pid in `~/.local/state/burrow/`) |
 | `burrow export [file]` / `burrow import <file>` | Export remembered project configs to YAML/JSON (tunnel.yml fields only, never tokens or passwords) and import them on another machine ([details](docs/export-import.md)) |
-| `burrow destroy [project]`       | Stop `cloudflared`, delete DNS records tagged `burrow:<project>`, delete the tunnel's connections and the tunnel. `burrow down <project> --purge` does the same |
+| `burrow destroy [project]`       | Stop `cloudflared`, delete DNS records tagged `burrow:<project>`, delete the tunnel's connections and the tunnel. `burrow down <project> --purge` does the same. DNS in a zone that can't be read right now is queued and retried by `burrow prune` ([details](docs/prune.md#queued-dns-deletions)) |
 | `burrow url [project]` / `burrow open [project] [service]` | Print a project's `https://` URLs (`--plain` for URLs only), or open one in the browser (`$BROWSER`, `xdg-open` or `open`; `--print` just prints it). Inside a project directory `burrow open mail` opens the `mail` service |
 | `burrow destroy --all`           | Delete every `burrow-*` tunnel and every `burrow:*` DNS record, and stop all local connectors. Asks `[y/N]` first; `--yes` skips the prompt (needed in non-interactive shells) |
 | `burrow prune`                   | Find orphaned `burrow:*` DNS records and `burrow-*` tunnels with no local state; lists them and asks before deleting (`--dry-run`, `--yes`) ([details](docs/prune.md)) |
@@ -383,6 +383,13 @@ DNS records are checked in every zone burrow knows about: `BURROW_DOMAIN`'s, the
 projects with their own [`domain:`](docs/domains.md), and zones cached from earlier runs. The
 page lists the zones it checked; a zone whose DNS can't be read (for example a domain since
 removed from the account) is shown as **not scanned** and skipped, and the rest still works.
+
+If a project is destroyed (or deleted from the dashboard) while one of those zones can't be
+read, the tunnel is still deleted and its DNS deletion is queued in
+`~/.local/state/burrow/cleanup/pending.json` (mode 600) instead of being forgotten. The panel
+lists queued deletions under **Queued DNS deletions** with **Retry now**
+(`POST /api/cleanup/pending/retry`); `burrow prune` retries them too. A project that has been
+set up again by then keeps its records and the entry is dropped.
 
 ### Bulk actions and auto-start
 

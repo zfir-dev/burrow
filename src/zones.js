@@ -60,11 +60,19 @@ export async function knownZones(cf, cfg) {
 }
 
 // DNS records matching { comment } or { prefix } in every known zone, each with zoneId.
-export async function recordsEverywhere(cf, cfg, { comment, prefix }) {
+// Without onError, one unreadable zone throws; with onError(zone, err), it's skipped.
+export async function recordsEverywhere(cf, cfg, { comment, prefix, onError }) {
   const out = [];
   for (const z of await knownZones(cf, cfg)) {
     const zc = inZone(cf, z.id);
-    const recs = comment ? await zc.recordsByComment(comment) : await zc.recordsByCommentPrefix(prefix);
+    let recs;
+    try {
+      recs = comment ? await zc.recordsByComment(comment) : await zc.recordsByCommentPrefix(prefix);
+    } catch (e) {
+      if (!onError) throw e;
+      onError(z, e);
+      continue;
+    }
     for (const r of recs) out.push({ ...r, zoneId: z.id, zoneName: z.domain });
   }
   return out;
