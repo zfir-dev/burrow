@@ -37,8 +37,8 @@ npm install -g burrow-cli
 Or from git, to follow a branch or a tag:
 
 ```sh
-npm install -g github:zfir-dev/burrow          # or git+ssh://git@github.com/zfir-dev/burrow.git
-npm install -g github:zfir-dev/burrow#main     # a branch or tag
+npm install -g github:zfir-dev/burrow-cli          # or git+ssh://git@github.com/zfir-dev/burrow-cli.git
+npm install -g github:zfir-dev/burrow-cli#main     # a branch or tag
 ```
 
 From a checkout (handy while hacking on it, since edits apply immediately):
