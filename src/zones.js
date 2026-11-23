@@ -49,9 +49,16 @@ function metas() {
 
 // Every zone burrow may have records in: BURROW_DOMAIN's, the cached ones, and the zones
 // remembered for projects. [{ id, domain }], unique by id.
-export async function knownZones(cf, cfg) {
+export async function knownZones(cf, cfg, { onError } = {}) {
   const out = new Map();
-  if (cfg.domain) out.set(await zoneIdFor(cf, cfg, cfg.domain), cfg.domain);
+  if (cfg.domain) {
+    // With onError, a failing lookup of BURROW_DOMAIN's zone is reported (id null) instead of
+    // stopping the other zones from being read.
+    try { out.set(await zoneIdFor(cf, cfg, cfg.domain), cfg.domain); } catch (e) {
+      if (!onError) throw e;
+      onError({ id: null, domain: cfg.domain }, e);
+    }
+  }
   for (const [domain, z] of Object.entries(readZoneCache())) {
     if (z.id && z.accountId === cfg.accountId && !out.has(z.id)) out.set(z.id, domain);
   }
@@ -60,12 +67,36 @@ export async function knownZones(cf, cfg) {
 }
 
 // DNS records matching { comment } or { prefix } in every known zone, each with zoneId.
-export async function recordsEverywhere(cf, cfg, { comment, prefix }) {
+// Without onError, one unreadable zone throws; with onError(zone, err), it's skipped.
+export async function recordsEverywhere(cf, cfg, { comment, prefix, onError }) {
   const out = [];
-  for (const z of await knownZones(cf, cfg)) {
+  for (const z of await knownZones(cf, cfg, { onError })) {
     const zc = inZone(cf, z.id);
-    const recs = comment ? await zc.recordsByComment(comment) : await zc.recordsByCommentPrefix(prefix);
+    let recs;
+    try {
+      recs = comment ? await zc.recordsByComment(comment) : await zc.recordsByCommentPrefix(prefix);
+    } catch (e) {
+      if (!onError) throw e;
+      onError(z, e);
+      continue;
+    }
     for (const r of recs) out.push({ ...r, zoneId: z.id, zoneName: z.domain });
   }
   return out;
+}
+
+// Zone read errors as [{ zone, zoneId, error }] (the shape `ls --json`, `status --json` and the
+// dashboard report), and which of them hides a project's DNS records: the zone remembered
+// for it by `burrow up` (zoneId / domain), else BURROW_DOMAIN's zone.
+export const zoneErrorCollector = () => {
+  const list = [];
+  return { list, onError: (z, e) => list.push({ zone: z.domain, zoneId: z.id, error: e.message }) };
+};
+export function zoneErrorFor(project, zoneErrors, cfg) {
+  if (!zoneErrors?.length) return null;
+  const meta = readMeta(project);
+  const hit = meta?.zoneId
+    ? zoneErrors.find((z) => z.zoneId === meta.zoneId || (meta.domain && z.zone === meta.domain))
+    : zoneErrors.find((z) => z.zone === (meta?.domain || cfg.domain));
+  return hit ? { zone: hit.zone, error: hit.error } : null;
 }

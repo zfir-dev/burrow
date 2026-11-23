@@ -70,7 +70,7 @@ export async function route(ctx) {
 }
 
 export const html = {
-  toolbar: '<li x-show="updateAvailable"><button class="update-notice" @click="openUpdate">Update available</button></li>',
+  toolbarMain: '<li x-show="updateAvailable"><button class="update-notice" @click="openUpdate">Update available</button></li>',
   sections: `
 <p class="version-line"><small class="muted">
   <span x-text="versionText"></span>

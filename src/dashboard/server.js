@@ -13,6 +13,7 @@ import {
 } from './auth.js';
 import { LOGIN_HTML, renderApp, APP_CSS, APP_JS, LOGIN_JS } from './ui.js';
 import { totpEnabled, verifyCode } from './totp.js';
+import { openSessionStore } from './session-store.js';
 import { loadPanels, sortPanels, panelJs, panelCss, panelVendor, events } from './panels.js';
 
 // Vendored front-end libraries, served from node_modules (no CDN, works offline).
@@ -30,6 +31,7 @@ function vendorAsset(path, entry = VENDOR[path]) {
 const BIN = fileURLToPath(new URL('../../bin/burrow.js', import.meta.url));
 const COOKIE = 'burrow_session';
 const SESSION_TTL = 12 * 60 * 60 * 1000;
+const BLOCKED_LOG_MS = 60 * 1000;
 
 const SECURITY_HEADERS = {
   'Content-Security-Policy':
@@ -135,14 +137,36 @@ function buildPanels(list) {
   return { list, html: renderApp(list), js: panelJs(list), css: panelCss(list), vendor: panelVendor(list) };
 }
 
-export function createDashboard({ password, log = console.log, panels } = {}) {
+// persistSessions: keep sessions (and their signing secret) in the state dir so they survive
+// a restart (see session-store.js). On for `burrow dashboard`; off by default (tests).
+export function createDashboard({ password, log = console.log, panels, persistSessions = false } = {}) {
   if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
     throw new Error(`Set BURROW_DASHBOARD_PASSWORD (at least ${MIN_PASSWORD_LENGTH} characters) in the burrow config.`);
   }
-  const key = sessionKey(newSecret(), password);
+  let store = null;
+  if (persistSessions) {
+    try { store = openSessionStore(); } catch (e) { log(`warning: sessions are kept in memory only (${e.message})`); }
+  }
+  const key = sessionKey(store ? store.secret : newSecret(), password);
   const sessions = new Map(); // id -> exp (server-side, so logout really ends a session)
   const sessionInfo = new Map(); // id -> { createdAt, lastSeen, ip, agent } (for the Sessions panel)
+  if (store) for (const [id, s] of store.sessions) { sessions.set(id, s.exp); sessionInfo.set(id, s.info); }
+  const saveSessions = (touchOnly = false) => {
+    if (!store) return;
+    try { (touchOnly ? store.touch : store.save)(sessions, sessionInfo); } catch (e) { log(`warning: could not save sessions: ${e.message}`); }
+  };
   const limiter = new RateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
+  // Sign-ins refused by the rate limit go to the event history, at most one entry per IP per
+  // minute (with how many were left out), so a flood of attempts can't flood the history.
+  const blockedSeen = new Map(); // ip -> { at, suppressed }
+  const recordBlocked = (ip, retryAfter, now = Date.now()) => {
+    const b = blockedSeen.get(ip);
+    if (b && now - b.at < BLOCKED_LOG_MS) { b.suppressed++; return; }
+    const more = b?.suppressed ? ` (${b.suppressed} more since the last entry)` : '';
+    events.emit('event', { action: 'sign-in', ok: false, detail: `blocked by the rate limit from ${ip}${more}; retry in ${retryAfter}s` });
+    blockedSeen.set(ip, { at: now, suppressed: 0 });
+    if (blockedSeen.size > 10000) for (const [k, v] of blockedSeen) if (now - v.at >= BLOCKED_LOG_MS) blockedSeen.delete(k);
+  };
   const busy = new Set();
   const ready = (panels ? Promise.resolve(sortPanels(panels)) : loadPanels()).then(buildPanels);
   ready.catch((e) => log(`error: dashboard panels failed to load: ${e.message}`));
@@ -175,7 +199,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
     sessions: {
       current: () => authed(req) || null,
       list: () => [...sessions].filter(([, exp]) => exp > Date.now()).map(([id, exp]) => ({ id, exp, ...(sessionInfo.get(id) || {}) })),
-      revoke: (id) => { sessionInfo.delete(id); return sessions.delete(id); },
+      revoke: (id) => { sessionInfo.delete(id); const had = sessions.delete(id); saveSessions(); return had; },
       clearCookie: () => cookie('', 0),
     },
   });
@@ -184,11 +208,12 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
     const id = verifySession(key, parseCookies(req.headers.cookie)[COOKIE]);
     if (!id) return false;
     const exp = sessions.get(id);
-    if (!exp || exp < Date.now()) { sessions.delete(id); sessionInfo.delete(id); return false; }
+    if (!exp || exp < Date.now()) { sessions.delete(id); sessionInfo.delete(id); saveSessions(); return false; }
     const info = sessionInfo.get(id) || { createdAt: Date.now(), ip: clientIp(req), agent: String(req.headers['user-agent'] || '').slice(0, 200) };
     info.lastSeen = Date.now();
     info.ip = clientIp(req);
     sessionInfo.set(id, info);
+    saveSessions(true);
     return id;
   };
   const cookie = (value, maxAge) =>
@@ -216,6 +241,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       const lim = limiter.check(ip);
       if (!lim.allowed) {
         log(`login rate-limited for ${ip}`);
+        recordBlocked(ip, lim.retryAfter);
         const msg = `Too many attempts. Try again in ${Math.ceil(lim.retryAfter / 60)} min.`;
         if (wantsJson) return json(res, 429, { error: msg, retryAfter: lim.retryAfter }, { 'Retry-After': String(lim.retryAfter) });
         return send(res, 429, LOGIN_HTML(`Too many attempts. Try again in ${Math.ceil(lim.retryAfter / 60)} min.`),
@@ -239,6 +265,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       if (totpEnabled() && !verifyCode(code)) {
         limiter.fail(ip);
         log(`login failed from ${ip}: two-factor code`);
+        events.emit('event', { action: 'sign-in', ok: false, detail: `${code ? 'wrong' : 'missing'} two-factor code from ${ip}` });
         const msg = code ? 'Wrong two-factor code.' : 'Enter the code from your authenticator app.';
         if (wantsJson) return json(res, 401, { error: msg, twoFactor: true });
         return send(res, 401, LOGIN_HTML(msg), 'text/html; charset=utf-8');
@@ -246,6 +273,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       limiter.reset(ip);
       const s = signSession(key, SESSION_TTL);
       sessions.set(s.id, s.exp);
+      saveSessions();
       log(`login ok from ${ip}`);
       events.emit('event', { action: 'sign-in', detail: `from ${ip}` });
       if (wantsJson) return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(s.value, SESSION_TTL / 1000) });
@@ -264,6 +292,8 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
 
     if (req.method === 'POST' && path === '/logout') {
       sessions.delete(sid);
+      sessionInfo.delete(sid);
+      saveSessions();
       events.emit('event', { action: 'sign-out', detail: `from ${clientIp(req)}` });
       return json(res, 200, { ok: true }, { 'Set-Cookie': cookie('', 0) });
     }
@@ -323,18 +353,33 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
     return json(res, 404, { error: 'not found' });
   }
 
-  return createServer((req, res) => {
+  const server = createServer((req, res) => {
     handle(req, res).catch((e) => {
       log(`error: ${e.message}`);
       if (!res.headersSent) json(res, 500, { error: 'internal error' });
       else res.end();
     });
   });
+  // Background work of panels (export function start(ctx) -> stop function), for things that
+  // should happen with no browser open. Started once the server listens, stopped when it closes.
+  const stops = [];
+  server.once('listening', () => {
+    ready.then((P) => {
+      if (!server.listening) return;
+      const ctx = { log, events, loadConfig, invalidate: invalidateCloudflare, runCli, collect: () => collect(loadConfig()) };
+      for (const p of P.list) {
+        if (typeof p.start !== 'function') continue;
+        try { const stop = p.start(ctx); if (typeof stop === 'function') stops.push(stop); } catch (e) { log(`error: panel ${p.id}: ${e.message}`); }
+      }
+    }).catch(() => {});
+  });
+  server.once('close', () => { for (const stop of stops.splice(0)) { try { stop(); } catch {} } });
+  return server;
 }
 
 export function runDashboard({ port, host = '127.0.0.1' }) {
   const cfg = loadConfig();
-  const server = createDashboard({ password: cfg.dashboardPassword });
+  const server = createDashboard({ password: cfg.dashboardPassword, persistSessions: true });
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => {

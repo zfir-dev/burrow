@@ -101,8 +101,15 @@ program.command('share <target>')
   .option('--project <name>', 'like -f, with the tunnel.yml remembered for that project')
   .option('--no-hooks', 'with -f/--project: skip its hooks')
   .option('--detach', 'keep running in the background (remove with burrow down)')
+  .option('--expires <duration>', 'remove the share after 30m, 2h, 1d, … (1 minute to 30 days)')
   .option('--dry-run', 'print the plan only')
   .action(wrap(async (t, o) => (await import('../src/share.js')).share(t, o)));
+// Internal: the per-share expiry watcher started by `share --detach --expires` (src/share-expiry.js).
+program.command('_share-expire <project>', { hidden: true })
+  .action(wrap(async (project) => {
+    const { watchExpiry } = await import('../src/share-expiry.js');
+    await watchExpiry(project, { remove: (p) => cmd.down(p, {}) });
+  }));
 program.command('down [project]')
   .description('stop cloudflared (all running projects when none is given); keeps tunnel and DNS')
   .option('-f, --file <path>', 'path to tunnel.yml')
@@ -116,6 +123,7 @@ program.command('restart [project]')
   .description('re-sync and restart a project (all running projects when none is given)')
   .option('-f, --file <path>', 'path to tunnel.yml')
   .option('--dry-run', 'print the plan only')
+  .option('--no-hooks', 'skip the pre_up/post_up hooks in tunnel.yml')
   .action(wrap(async (p, o) => (await import('../src/restart.js')).restart(p, o)));
 program.command('destroy [project]')
   .description('stop cloudflared and delete the tunnel and its DNS records')

@@ -12,7 +12,8 @@ apply it if the project is running.
 - **Which editor**: `$VISUAL`, then `$EDITOR` (arguments are fine, e.g. `EDITOR="code --wait"`),
   then `vi`, then `nano`.
 - **Validation**: burrow edits a private temporary copy. The real `tunnel.yml` is only
-  replaced when the new text passes the same checks as `burrow up`. If it doesn't, burrow
+  replaced when the new text passes the same checks as `burrow up`, including the
+  [`hooks:`](hooks.md) section (hook names, `run`, `timeout`, `background`, `wait_for`). If it doesn't, burrow
   prints the error and asks whether to re-open the editor; answering no (or running without
   a terminal) leaves `tunnel.yml` untouched and tells you where your edits were kept.
   Quitting the editor with a non-zero exit (e.g. `:cq` in vi) also discards the change.

@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { loadConfig, requireConfig, stateDir } from './config.js';
 import { Cloudflare } from './cloudflare.js';
 import { tunnelName, recordComment, tunnelTarget, assertLabel, assertDomain } from './naming.js';
+import { ensureExpiryWatcher } from './share-expiry.js';
 import { startConnector, stopConnector, runningPid, saveMeta, readMeta, removeMeta, logFile } from './process.js';
 import { loadProjectFile } from './project.js';
 import { zoneIdFor, inZone } from './zones.js';
@@ -13,6 +14,32 @@ import { runHook, beforeDown, afterDown, stopBackground } from './hooks.js';
 // <label>.<domain>, DNS comment burrow:share-<label>, state share-<label>.*
 export const SHARE_PREFIX = 'share-';
 const log = (...a) => console.log(...a);
+
+// --expires: 30m, 2h, 1d, 7d (at least 1 minute, at most 30 days). Returns milliseconds.
+const EXPIRY_UNITS = { m: 60e3, min: 60e3, h: 3600e3, d: 24 * 3600e3 };
+export function parseExpires(value) {
+  const m = String(value ?? '').trim().match(/^(\d+)\s*(m|min|h|d)$/i);
+  const ms = m ? Number(m[1]) * EXPIRY_UNITS[m[2].toLowerCase()] : NaN;
+  if (!(ms >= 60e3 && ms <= 30 * 24 * 3600e3)) throw new Error(`Invalid --expires "${value}". Use e.g. 30m, 2h, 1d (1 minute to 30 days).`);
+  return ms;
+}
+
+// The dashboard (or anything else) asks a foreground `burrow share` to stop by setting
+// stopRequestedAt in the share's state file; that process checks it every 2 seconds.
+export function requestStop(project) {
+  const meta = readMeta(project);
+  if (!meta?.share) return false;
+  saveMeta(project, { ...meta, stopRequestedAt: new Date().toISOString() });
+  return true;
+}
+
+// Why a foreground share should stop now, or null.
+export function stopReason(meta, now = Date.now()) {
+  if (!meta) return 'its state was removed';
+  if (meta.stopRequestedAt) return 'stop requested from the dashboard';
+  if (meta.expiresAt && Date.parse(meta.expiresAt) <= now) return `it expired at ${meta.expiresAt}`;
+  return null;
+}
 
 export function isShare(project) {
   return project.startsWith(SHARE_PREFIX) && readMeta(project)?.share === true;
@@ -95,6 +122,8 @@ export async function removeShare(project, cf) {
 const alive = (pid) => {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 };
+// Is the foreground `burrow share` that owns this share still running?
+export const ownerAlive = (meta) => !!meta?.ownerPid && meta.ownerPid !== process.pid && alive(meta.ownerPid);
 
 // All shares this machine knows about (state files with share: true).
 export function shareNames() {
@@ -142,6 +171,7 @@ export async function restartShare(project, opts = {}) {
   await stopConnector(project);
   const pid = startConnector(project, await cf.getTunnelToken(tunnel.id), cfg.cloudflared);
   saveMeta(project, { ...meta, tunnelId: tunnel.id, ownerPid: null });
+  ensureExpiryWatcher(project); // e.g. after a reboot: the expiry still applies
   log(`${project}: restarted cloudflared (pid ${pid}) for https://${meta.hostname} -> ${meta.target}`);
   return 'restarted';
 }
@@ -162,13 +192,15 @@ export async function share(target, opts = {}) {
   const ingress = [{ hostname, service: url }, { service: 'http_status:404' }];
   const hooks = { enabled: opts.hooks !== false };
   const hookCtx = of && shareHookContext(project, of.file, hostname, of.proj.project);
+  const expiresMs = opts.expires === undefined ? null : parseExpires(opts.expires);
+  const expiresAt = expiresMs ? new Date(Date.now() + expiresMs).toISOString() : null;
 
   if (dry) {
     if (domain !== cfg.domain) log(`[dry-run] would use domain ${domain}${opts.domain ? '' : ` from ${of.file}`} (checking its zone is on the account)`);
     if (hookCtx) await runHook('pre_up', hookCtx, { dry: true, ...hooks });
     log(`[dry-run] would create tunnel ${tunnelName(project)} with ingress ${JSON.stringify(ingress)}`);
     log(`[dry-run] would create DNS CNAME ${hostname} (comment "${recordComment(project)}")`);
-    log(`[dry-run] would start cloudflared and share ${url} at https://${hostname}`);
+    log(`[dry-run] would start cloudflared and share ${url} at https://${hostname}${expiresAt ? ` until ${expiresAt}` : ''}`);
     if (hookCtx) await runHook('post_up', hookCtx, { dry: true, ...hooks });
     return;
   }
@@ -191,7 +223,7 @@ export async function share(target, opts = {}) {
   }
   saveMeta(project, {
     project, share: true, hostname, target: url, tunnelId: tunnel.id, tunnelName: tunnelName(project),
-    hostnames: [hostname], createdAt: new Date().toISOString(),
+    hostnames: [hostname], createdAt: new Date().toISOString(), expiresAt,
     // Not `file`: a share is never `burrow up`-able. projectFile gives down its hooks.
     ...(zoneId ? { domain, zoneId } : {}),
     ...(of ? { projectFile: of.file, shareOf: of.proj.project, hooks: hooks.enabled } : {}),
@@ -212,14 +244,21 @@ export async function share(target, opts = {}) {
   }
   log(`Sharing ${url} at https://${hostname} (cloudflared pid ${pid}, log ${logFile(project)})`);
   if (hookCtx) await runHook('post_up', { ...hookCtx, extra: { ...hookCtx.extra, BURROW_TUNNEL_ID: tunnel.id } }, { ...hooks, soft: true });
+  if (expiresAt) log(`Expires at ${expiresAt}${opts.detach ? ' (a background watcher removes it then)' : ''}.`);
+  if (opts.detach && expiresAt) ensureExpiryWatcher(project);
   if (opts.detach) {
     log(`Running in the background. Remove it with "burrow down ${project}" (or "burrow down").`);
     return;
   }
-  // Register the signal handlers before telling the user to press Ctrl+C.
+  // Register the signal handlers before telling the user to press Ctrl+C. The state file is
+  // re-read every 2 s: the dashboard can extend the expiry or ask this process to stop.
   const stopped = new Promise((resolve) => {
     const done = () => { clearInterval(watch); process.off('SIGINT', done); process.off('SIGTERM', done); resolve(); };
-    const watch = setInterval(() => { if (!runningPid(project)) { log('cloudflared exited.'); done(); } }, 2000);
+    const watch = setInterval(() => {
+      if (!runningPid(project)) { log('cloudflared exited.'); done(); return; }
+      const why = stopReason(readMeta(project));
+      if (why) { log(`Stopping: ${why}.`); done(); }
+    }, Number(process.env.BURROW_SHARE_POLL_MS) || 2000);
     process.on('SIGINT', done);
     process.on('SIGTERM', done);
   });

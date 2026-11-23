@@ -14,15 +14,26 @@ export function readPid(project) {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-export function isAlive(pid, match = 'cloudflared') {
+const HAS_PROC = existsSync('/proc/self');
+
+// A process that exits between kill(0) and reading /proc is gone, not alive: only trust
+// kill(0) alone where there is no /proc at all (macOS).
+export function isAlive(pid, match = 'cloudflared', { proc = HAS_PROC } = {}) {
   if (!pid) return false;
   try { process.kill(pid, 0); } catch (e) { if (e.code !== 'EPERM') return false; }
+  if (!proc) return true;
   try {
     const cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
     return cmd.includes(match);
   } catch {
-    return true; // no /proc (macOS): trust kill(0)
+    return false;
   }
+}
+
+// kill() that treats "no such process" as done: the process may exit on its own between
+// the liveness check and the signal (seen under load as "kill ESRCH").
+function signal(pid, sig) {
+  try { process.kill(pid, sig); return true; } catch (e) { if (e.code === 'ESRCH') return false; throw e; }
 }
 
 export function runningPid(project) {
@@ -54,10 +65,11 @@ export async function stopConnector(project, timeoutMs = 10000) {
     rmSync(pidFile(project), { force: true });
     return null;
   }
-  process.kill(pid, 'SIGTERM');
-  const start = Date.now();
-  while (isAlive(pid) && Date.now() - start < timeoutMs) await new Promise((r) => setTimeout(r, 200));
-  if (isAlive(pid)) process.kill(pid, 'SIGKILL');
+  if (signal(pid, 'SIGTERM')) {
+    const start = Date.now();
+    while (isAlive(pid) && Date.now() - start < timeoutMs) await new Promise((r) => setTimeout(r, 200));
+    if (isAlive(pid)) signal(pid, 'SIGKILL');
+  }
   rmSync(pidFile(project), { force: true });
   return pid;
 }
