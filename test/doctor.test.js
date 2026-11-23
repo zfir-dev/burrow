@@ -105,8 +105,10 @@ test('hookCommandFound', () => {
   assert.equal(hookCommandFound('no-such-command-for-burrow --x', dir, '/usr/bin:/bin').ok, false);
   assert.match(hookCommandFound('no-such-command-for-burrow', dir, '/usr/bin').detail, /not found on PATH/);
   assert.equal(hookCommandFound('./missing.sh', dir).ok, false);
-  assert.equal(hookCommandFound('FOO=1 npm start', dir).detail, 'not checked (shell syntax)');
-  assert.equal(hookCommandFound('cd web && npm start', dir).ok, true);
+  // Shell syntax is parsed now (details in shell-words.test.js), not skipped.
+  assert.equal(hookCommandFound('FOO=1 sh -c true', dir).ok, true);
+  assert.deepEqual(hookCommandFound('cd no-such-dir && sh -c true', dir).problems, [`cd no-such-dir: no such directory in ${dir}`]);
+  assert.match(hookCommandFound('node $(which x)', dir).detail, /not checked: command substitution/);
 });
 
 test('doctor: checks the project domain: zone and its hooks', async () => {
@@ -126,7 +128,7 @@ test('doctor: checks the project domain: zone and its hooks', async () => {
     let r = await sb.run(['doctor']);
     assert.equal(r.code, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /✓ domain example\.org - zone zone-2/);
-    assert.match(r.stdout, /✓ hook pre_up - \.\/scripts\/warm\.sh/);
+    assert.match(r.stdout, /✓ hook pre_up - found: \.\/scripts\/warm\.sh/);
     assert.match(r.stdout, /! hook post_up - no-such-command-for-burrow not found on PATH/);
     assert.match(r.stdout, /! hook pre_down - \.\/scripts\/missing\.sh not found or not executable/);
 
