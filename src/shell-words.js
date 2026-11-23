@@ -103,7 +103,10 @@ function readCase(src, i) {
 // (plain: the word's unquoted leading part, used to spot NAME=value; depth: how many
 // if/while/for/case bodies it is inside; scope: '' at the top, another string inside each
 // subshell or command substitution; branchStart: the first command of a then/elif/else/do
-// body or case arm, which starts from the directory the block was entered in)
+// body or case arm, which starts from the directory the block was entered in; branchKind:
+// 'then' / 'elif' / 'else' / 'do' for it; cond: 'start' for the first command of an
+// if/elif/while/until condition and 'cont' for the rest of it; op: the operator before the
+// command)
 export function parseCommands(script, ctx = { scope: '', depth: 0, ids: { n: 0 } }) {
   const src = String(script ?? '');
   const commands = [];
@@ -114,6 +117,9 @@ export function parseCommands(script, ctx = { scope: '', depth: 0, ids: { n: 0 }
   let word = null; // { text, plain, quoted, expands }
   let heredocs = []; // delimiters waiting for the next newline
   let pendingBranch = false; // `then` / `do` / `else` alone: the next command starts the branch
+  let pendingKind = null; // which word that was
+  let condMode = null; // 'start' / 'cont' while reading the condition of an if / elif / while / until
+  let curOp = ''; // the operator (&&, ||, ;, |, &, newline) just before the command being read
   const nested = (text, extra = {}) => parseCommands(text, { ...ctx, depth, ...extra });
   const isolated = (text) => nested(text, { scope: `${ctx.scope}/${++ctx.ids.n}` });
   const flush = () => { if (word) { words.push(word); word = null; } };
@@ -123,17 +129,32 @@ export function parseCommands(script, ctx = { scope: '', depth: 0, ids: { n: 0 }
     // Reserved words: drop then/do/else/…, and track how deep in blocks we are.
     let opened = false;
     let branch = false;
+    let kind = null;
     while (words.length && !words[0].quoted) {
       const t = words[0].text;
-      if (PREFIX_WORDS.has(t)) { words.shift(); if (t !== '!') branch = true; continue; }
-      if (OPENERS.has(t)) { words.shift(); if (!opened) { depth++; opened = true; } continue; }
+      if (PREFIX_WORDS.has(t)) {
+        words.shift();
+        if (t !== '!') { branch = true; kind = t; }
+        if (t === 'elif') condMode = 'start';
+        else if (t === 'then' || t === 'do') condMode = null;
+        continue;
+      }
+      if (OPENERS.has(t)) { words.shift(); if (!opened) { depth++; opened = true; } condMode = 'start'; continue; }
       break;
     }
     const head = words[0] && !words[0].quoted ? words[0].text : '';
     if (CLOSERS.has(head)) { words.shift(); depth = Math.max(ctx.depth, depth - 1); }
     else if (head === 'for' || head === 'select') { words = []; depth++; } // the loop header: for NAME [in WORDS]
-    if (words.length || unsupported) commands.push({ words, unsupported, depth, scope: ctx.scope, ...(branch || pendingBranch ? { branchStart: true } : {}) });
-    if (words.length || unsupported) pendingBranch = false; else if (branch) pendingBranch = true;
+    if (words.length || unsupported) {
+      commands.push({
+        words, unsupported, depth, scope: ctx.scope, op: curOp,
+        ...(condMode ? { cond: condMode } : {}),
+        ...(branch || pendingBranch ? { branchStart: true, branchKind: branch ? kind : pendingKind } : {}),
+      });
+      if (condMode === 'start') condMode = 'cont';
+      curOp = '';
+    }
+    if (words.length || unsupported) pendingBranch = false; else if (branch) { pendingBranch = true; pendingKind = kind; }
     words = []; unsupported = null;
   };
   const cur = () => (word ||= { text: '', plain: '', quoted: false, expands: false });
@@ -212,7 +233,12 @@ export function parseCommands(script, ctx = { scope: '', depth: 0, ids: { n: 0 }
       i = r.end; continue;
     }
     const op = OPERATORS.find((o) => src.startsWith(o, i));
-    if (op && !(op === '&' && /[<>]$/.test(word?.text || ''))) { end(); i += op.length; continue; }
+    if (op && !(op === '&' && /[<>]$/.test(word?.text || ''))) {
+      end();
+      // "a &&\n b": the newline continues the list, it doesn't end it.
+      if (!(op === '\n' && !words.length && !word && ['&&', '||', '|'].includes(curOp))) curOp = op;
+      i += op.length; continue;
+    }
     if (c === '(') {
       if (atStart()) {
         const k = closeParen(src, i + 1);
