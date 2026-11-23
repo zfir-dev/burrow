@@ -97,6 +97,7 @@ program.command('share <target>')
   .description('share a local port or URL on a temporary <random>.<domain> hostname')
   .option('--name <label>', 'pick the hostname label instead of a random one')
   .option('--detach', 'keep running in the background (remove with burrow down)')
+  .option('--expires <duration>', 'remove the share after 30m, 2h, 1d, … (1 minute to 30 days)')
   .option('--dry-run', 'print the plan only')
   .action(wrap(async (t, o) => (await import('../src/share.js')).share(t, o)));
 program.command('down [project]')

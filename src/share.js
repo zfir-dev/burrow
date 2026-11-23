@@ -10,6 +10,32 @@ import { startConnector, stopConnector, runningPid, saveMeta, readMeta, removeMe
 export const SHARE_PREFIX = 'share-';
 const log = (...a) => console.log(...a);
 
+// --expires: 30m, 2h, 1d, 7d (at least 1 minute, at most 30 days). Returns milliseconds.
+const EXPIRY_UNITS = { m: 60e3, min: 60e3, h: 3600e3, d: 24 * 3600e3 };
+export function parseExpires(value) {
+  const m = String(value ?? '').trim().match(/^(\d+)\s*(m|min|h|d)$/i);
+  const ms = m ? Number(m[1]) * EXPIRY_UNITS[m[2].toLowerCase()] : NaN;
+  if (!(ms >= 60e3 && ms <= 30 * 24 * 3600e3)) throw new Error(`Invalid --expires "${value}". Use e.g. 30m, 2h, 1d (1 minute to 30 days).`);
+  return ms;
+}
+
+// The dashboard (or anything else) asks a foreground `burrow share` to stop by setting
+// stopRequestedAt in the share's state file; that process checks it every 2 seconds.
+export function requestStop(project) {
+  const meta = readMeta(project);
+  if (!meta?.share) return false;
+  saveMeta(project, { ...meta, stopRequestedAt: new Date().toISOString() });
+  return true;
+}
+
+// Why a foreground share should stop now, or null.
+export function stopReason(meta, now = Date.now()) {
+  if (!meta) return 'its state was removed';
+  if (meta.stopRequestedAt) return 'stop requested from the dashboard';
+  if (meta.expiresAt && Date.parse(meta.expiresAt) <= now) return `it expired at ${meta.expiresAt}`;
+  return null;
+}
+
 export function isShare(project) {
   return project.startsWith(SHARE_PREFIX) && readMeta(project)?.share === true;
 }
@@ -63,6 +89,8 @@ export async function removeShare(project, cf) {
 const alive = (pid) => {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 };
+// Is the foreground `burrow share` that owns this share still running?
+export const ownerAlive = (meta) => !!meta?.ownerPid && meta.ownerPid !== process.pid && alive(meta.ownerPid);
 
 // All shares this machine knows about (state files with share: true).
 export function shareNames() {
@@ -124,11 +152,13 @@ export async function share(target, opts = {}) {
   const project = SHARE_PREFIX + label;
   const hostname = `${label}.${cfg.domain}`;
   const ingress = [{ hostname, service: url }, { service: 'http_status:404' }];
+  const expiresMs = opts.expires === undefined ? null : parseExpires(opts.expires);
+  const expiresAt = expiresMs ? new Date(Date.now() + expiresMs).toISOString() : null;
 
   if (dry) {
     log(`[dry-run] would create tunnel ${tunnelName(project)} with ingress ${JSON.stringify(ingress)}`);
     log(`[dry-run] would create DNS CNAME ${hostname} (comment "${recordComment(project)}")`);
-    log(`[dry-run] would start cloudflared and share ${url} at https://${hostname}`);
+    log(`[dry-run] would start cloudflared and share ${url} at https://${hostname}${expiresAt ? ` until ${expiresAt}` : ''}`);
     return;
   }
   if (readMeta(project)) throw new Error(`Share "${label}" already exists. Remove it with "burrow down ${project}".`);
@@ -138,7 +168,7 @@ export async function share(target, opts = {}) {
   const tunnel = await cf.createTunnel(tunnelName(project), randomBytes(32).toString('base64'));
   saveMeta(project, {
     project, share: true, hostname, target: url, tunnelId: tunnel.id, tunnelName: tunnelName(project),
-    hostnames: [hostname], createdAt: new Date().toISOString(),
+    hostnames: [hostname], createdAt: new Date().toISOString(), expiresAt,
     // A share in the foreground belongs to this process; restart leaves it alone.
     ownerPid: opts.detach ? null : process.pid,
   });
@@ -154,14 +184,20 @@ export async function share(target, opts = {}) {
     throw e;
   }
   log(`Sharing ${url} at https://${hostname} (cloudflared pid ${pid}, log ${logFile(project)})`);
+  if (expiresAt) log(`Expires at ${expiresAt}${opts.detach ? ' (the dashboard stops it then, if it is running)' : ''}.`);
   if (opts.detach) {
     log(`Running in the background. Remove it with "burrow down ${project}" (or "burrow down").`);
     return;
   }
-  // Register the signal handlers before telling the user to press Ctrl+C.
+  // Register the signal handlers before telling the user to press Ctrl+C. The state file is
+  // re-read every 2 s: the dashboard can extend the expiry or ask this process to stop.
   const stopped = new Promise((resolve) => {
     const done = () => { clearInterval(watch); process.off('SIGINT', done); process.off('SIGTERM', done); resolve(); };
-    const watch = setInterval(() => { if (!runningPid(project)) { log('cloudflared exited.'); done(); } }, 2000);
+    const watch = setInterval(() => {
+      if (!runningPid(project)) { log('cloudflared exited.'); done(); return; }
+      const why = stopReason(readMeta(project));
+      if (why) { log(`Stopping: ${why}.`); done(); }
+    }, Number(process.env.BURROW_SHARE_POLL_MS) || 2000);
     process.on('SIGINT', done);
     process.on('SIGTERM', done);
   });

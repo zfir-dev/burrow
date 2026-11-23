@@ -124,7 +124,7 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | `burrow add [project]`           | Create a `tunnel.yml` by answering prompts, or non-interactively with `--app`, `--path`, `--service` ([details](docs/add.md)) |
 | `burrow up [project]`            | Create or reuse tunnel `burrow-<project>`, PUT its ingress config, upsert the CNAMEs (and remove stale ones tagged for this project), then (re)start `cloudflared` in the background |
 | `burrow edit [project]`          | Open `tunnel.yml` in `$EDITOR` (or `vi`/`nano`), validate it on save (a broken edit never replaces the file), and offer to re-run `up` if the project is running; `--yes`, `--no-apply` ([details](docs/edit.md)) |
-| `burrow share <port>`            | Share a local port on a temporary `<random>.<domain>` hostname; Ctrl+C, `burrow down` or `burrow destroy` removes it ([details](docs/share.md)) |
+| `burrow share <port>`            | Share a local port on a temporary `<random>.<domain>` hostname; Ctrl+C, `burrow down` or `burrow destroy` removes it, `--expires 2h` ends it on its own ([details](docs/share.md)) |
 | `burrow down [project]`          | Stop that project's `cloudflared` only. The tunnel and DNS records are kept, so the next `up` is quick |
 | `burrow restart [project]`       | Re-sync the tunnel config and DNS and restart `cloudflared` (same as `up`, which reuses the tunnel). With no project, restarts every connector that is running now; `--dry-run` shows the plan, `--no-hooks` skips the `pre_up`/`post_up` hooks. Detached shares are restarted on the same hostname, shares still attached to a `burrow share` in the foreground are skipped ([details](docs/share.md#restart-completion-and-export)) |
 | `burrow down`                    | Stop **every** running burrow connector (each pid in `~/.local/state/burrow/`) |
@@ -435,8 +435,10 @@ shares with their link, target and time left. **+1 hour** resets the expiry to a
 (`burrow down share-<name>`).
 
 The dashboard stops expired shares within about 30 seconds. A share that expired while the
-dashboard was off is stopped when it next starts. A share started in a terminal with plain
-`burrow share` is listed, but you stop it there with Ctrl+C, and it has no expiry.
+dashboard was off is stopped when it next starts. A share started in a terminal with
+`burrow share` (with or without `--expires`) is listed too and can be extended or stopped
+here: the dashboard updates its state file and that process removes the share itself
+([details](docs/share.md#from-the-dashboard)).
 
 | Endpoint | Does |
 | --- | --- |

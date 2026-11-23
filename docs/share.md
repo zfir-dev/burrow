@@ -21,8 +21,22 @@ Removed https://k3x9q2mf7a.example.dev
 - `--detach` leaves it running in the background. `burrow down share-<label>`, or a bare
   `burrow down`, removes it completely (unlike normal projects, whose tunnel and DNS are kept).
   `burrow destroy share-<label>` works too.
+- `--expires <duration>` (`30m`, `2h`, `7d`; 1 minute to 30 days) gives it an end time,
+  stored in `share-<label>.json` as `expiresAt`. A foreground share removes itself when that
+  time passes. A detached share is stopped by the dashboard when it's running (within about
+  30 seconds, or as soon as it next starts); without a dashboard it stays up until
+  `burrow down share-<label>`.
 - `--dry-run` prints the plan without calling Cloudflare.
 - Don't name your own projects `share-…`, so they can't be mistaken for shares.
+
+### From the dashboard
+
+The dashboard and a terminal `burrow share` use the same state file, so a share started in a
+terminal shows up in the **Shares** panel too. **+1 hour** sets a new `expiresAt`, which the
+terminal process picks up within 2 seconds. **Stop** sets `stopRequestedAt`; the terminal
+process sees it, removes the tunnel and DNS record and exits as if you'd pressed Ctrl+C. If
+that process is gone (or doesn't finish within 10 seconds), the dashboard runs
+`burrow down share-<label>` itself.
 
 ## Restart, completion and export
 
