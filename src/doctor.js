@@ -36,7 +36,6 @@ function scriptProblem(tool, args, cwd) {
     if (['run', 'run-script', 'rum', 'urn'].includes(rest[0])) script = rest[1];
     else if (['start', 'test', 't', 'stop', 'restart'].includes(rest[0])) script = rest[0] === 't' ? 'test' : rest[0];
     if (!script) return null;
-    if (script === 'start' && rest[0] === 'start' && existsSync(join(cwd, 'server.js'))) return null; // npm's default
   } else {
     const builtin = ['install', 'add', 'remove', 'i', 'exec', 'dlx', 'create', 'init', 'why', 'list', 'ls', 'outdated', 'upgrade', 'up', 'update', 'link', 'unlink', 'config', 'cache', 'store', 'audit', 'info', 'publish', 'pack'];
     if (rest[0] === 'run') script = rest[1];
@@ -44,21 +43,46 @@ function scriptProblem(tool, args, cwd) {
     if (!script) return null;
   }
   const scripts = packageScripts(cwd);
-  if (!scripts) return `${tool} ${rest.join(' ')}: no package.json in ${cwd}`;
-  return script in scripts ? null : `${tool}: no "${script}" script in ${join(cwd, 'package.json')}`;
+  if (!scripts) return { problem: `${tool} ${rest.join(' ')}: no package.json in ${cwd}` };
+  if (script in scripts) return null;
+  // npm's default: with no start script, `npm start` runs `node server.js`.
+  if (tool === 'npm' && script === 'start' && rest[0] === 'start' && existsSync(join(cwd, 'server.js'))) {
+    return { note: `npm start: no "start" script, so npm runs "node server.js" (${join(cwd, 'server.js')})` };
+  }
+  return { problem: `${tool}: no "${script}" script in ${join(cwd, 'package.json')}` };
 }
 
 // Check a hook command without running it: for every simple command (each part of a
 // pipeline, && / || / ; list), skip VAR=value prefixes and wrappers (env, exec, nohup, …),
 // follow `cd <dir>`, and look the command up (builtin, ./script relative to the current
 // directory, or PATH); `npm run x` and friends also need script x in package.json.
-// -> { ok, detail, problems: [...], checked: [...], unchecked: [...] }
+// Commands inside $(…), backticks, ( … ), { …; }, if/while/until/for/case are checked too
+// (see shell-words.js): a cd in a subshell or $(…) stays there, and a cd inside an if/loop/case
+// body makes the directory unknown after the block.
+// -> { ok, detail, problems: [...], checked: [...], unchecked: [...], notes: [...] }
 export function checkHookCommand(run, cwd, path = process.env.PATH || '') {
   const problems = [];
   const checked = [];
   const unchecked = [];
-  let dir = cwd;
+  const notes = [];
+  // Current directory per scope (a subshell or $(…) starts in its parent's directory).
+  const dirs = new Map([['', cwd]]);
+  const cdInBlock = new Set();
+  const lastDepth = new Map(); // scope -> depth of its previous command
+  const entryDirs = new Map(); // scope -> [directory when each block depth was entered]
+  const parentOf = (s) => s.slice(0, s.lastIndexOf('/'));
   for (const cmd of parseCommands(run)) {
+    const scope = cmd.scope || '';
+    if (!dirs.has(scope)) dirs.set(scope, dirs.get(parentOf(scope)) ?? null);
+    if (cmd.depth === 0 && cdInBlock.has(scope)) { cdInBlock.delete(scope); dirs.set(scope, null); }
+    const entry = entryDirs.get(scope) || [];
+    entryDirs.set(scope, entry);
+    for (let d = (lastDepth.get(scope) ?? 0) + 1; d <= cmd.depth; d++) entry[d] = dirs.get(scope);
+    lastDepth.set(scope, cmd.depth);
+    // A then/else/case-arm body starts where the block began, not where the last branch cd'd to.
+    if (cmd.branchStart && cmd.depth > 0 && entry[cmd.depth] !== undefined) dirs.set(scope, entry[cmd.depth]);
+    let dir = dirs.get(scope);
+    const setDir = (d) => { dir = d; dirs.set(scope, d); if (cmd.depth > 0) cdInBlock.add(scope); };
     if (cmd.unsupported) { unchecked.push(cmd.unsupported); continue; }
     let words = cmd.words.slice();
     while (words.length && isAssignment(words[0])) words.shift();
@@ -71,15 +95,16 @@ export function checkHookCommand(run, cwd, path = process.env.PATH || '') {
     }
     if (!words.length) continue;
     const [head, ...args] = words;
-    if (head.expands) { unchecked.push(`${head.text} (variable)`); continue; }
+    if (head.expands) { unchecked.push(`${head.text} (${/[`(]/.test(head.text) ? 'command output' : 'variable'})`); continue; }
     const name = head.text;
     if (name === 'cd') {
       const target = args[0];
-      if (!target) { dir = process.env.HOME || dir; continue; }
-      if (target.expands || target.text === '-') { unchecked.push(`cd ${target.text}`); dir = null; continue; }
-      const next = isAbsolute(target.text) ? target.text : join(dir || cwd, target.text);
-      if (dir !== null && !existsSync(next)) problems.push(`cd ${target.text}: no such directory in ${dir}`);
-      dir = dir === null ? null : next;
+      if (!target) { setDir(process.env.HOME || dir); continue; }
+      if (target.expands || target.text === '-') { unchecked.push(`cd ${target.text}`); setDir(null); continue; }
+      if (dir === null && !isAbsolute(target.text)) { unchecked.push(`cd ${target.text}`); continue; }
+      const next = isAbsolute(target.text) ? target.text : join(dir, target.text);
+      if (!existsSync(next)) problems.push(`cd ${target.text}: no such directory in ${dir}`);
+      setDir(next);
       continue;
     }
     if (SHELL_BUILTINS.has(name)) { checked.push(name); continue; }
@@ -93,13 +118,15 @@ export function checkHookCommand(run, cwd, path = process.env.PATH || '') {
     checked.push(name);
     if (['npm', 'yarn', 'pnpm'].includes(name) && dir !== null) {
       const p = scriptProblem(name, args.map((a) => a.text), dir);
-      if (p) problems.push(p);
+      if (p?.problem) problems.push(p.problem);
+      if (p?.note) notes.push(p.note);
     }
   }
   const ok = problems.length === 0;
-  const parts = ok ? [checked.length ? `found: ${[...new Set(checked)].join(', ')}` : ''] : problems;
+  const parts = ok ? [checked.length ? `found: ${[...new Set(checked)].join(', ')}` : ''] : [...problems];
+  if (notes.length) parts.push(`note: ${[...new Set(notes)].join(', ')}`);
   if (unchecked.length) parts.push(`not checked: ${[...new Set(unchecked)].join(', ')}`);
-  return { ok, detail: parts.filter(Boolean).join('; ') || 'nothing to check', problems, checked, unchecked };
+  return { ok, detail: parts.filter(Boolean).join('; ') || 'nothing to check', problems, checked, unchecked, notes };
 }
 
 // Kept for callers of the first version: the result of checkHookCommand.
