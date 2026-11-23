@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 export const BIN = fileURLToPath(new URL('../../bin/burrow.js', import.meta.url));
 export const EXAMPLE = fileURLToPath(new URL('../../examples/acme-shop.tunnel.yml', import.meta.url));
 
+export const DEAD_API = 'http://127.0.0.1:1';
 const CONFIG_KEYS = ['CF_API_TOKEN', 'CF_ACCOUNT_ID', 'CF_ZONE_ID', 'BURROW_DOMAIN', 'CLOUDFLARED_BIN'];
 
 export function sandbox({ api, domain = 'example.dev', extra = {} } = {}) {
@@ -30,8 +31,8 @@ export function sandbox({ api, domain = 'example.dev', extra = {} } = {}) {
   writeFileSync(config, Object.entries(values).map(([k, v]) => `${k}=${v}`).join('\n') + '\n', { mode: 0o600 });
   const env = { ...process.env, BURROW_CONFIG: config, BURROW_STATE_DIR: state };
   for (const k of [...CONFIG_KEYS, ...Object.keys(extra)]) delete env[k];
-  if (api) env.BURROW_CF_API_BASE = api;
-  else delete env.BURROW_CF_API_BASE;
+  // Without a mock, point at a dead local port rather than the real Cloudflare API.
+  env.BURROW_CF_API_BASE = api || DEAD_API;
 
   const start = (args, opts = {}) =>
     spawn(process.execPath, [BIN, ...args], {
