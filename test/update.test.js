@@ -16,6 +16,11 @@ const sh = (cwd, bin, args) => {
   return r.stdout.trim();
 };
 const git = (cwd, ...args) => sh(cwd, 'git', [...ID, ...args]);
+// The fake release is always one patch above whatever package.json says, so
+// these tests keep working after every real version bump.
+const CURRENT = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+const NEXT = CURRENT.replace(/^(\d+)\.(\d+)\.(\d+).*$/, (_, a, b, c) => `${a}.${b}.${Number(c) + 1}`);
+const NEXT_RE = NEXT.replace(/\./g, '\\.');
 
 function copyPackage(dest) {
   mkdirSync(dest, { recursive: true });
@@ -87,12 +92,12 @@ test('git checkout: --check reports new commits, update pulls and runs npm insta
     assert.match(r.stdout, /git checkout/);
     assert.match(r.stdout, /Up to date with origin\/main/);
 
-    const next = w.bump('0.1.1');
+    const next = w.bump(NEXT);
     r = w.burrow(co, ['update', '--check']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /1 new commit\(s\) on origin\/main/);
-    assert.match(r.stdout, /release 0\.1\.1/);
-    assert.match(r.stdout, /Version: \d+\.\d+\.\d+ -> 0\.1\.1/);
+    assert.match(r.stdout, new RegExp(`release ${NEXT_RE}`));
+    assert.match(r.stdout, new RegExp(`Version: \\d+\\.\\d+\\.\\d+ -> ${NEXT_RE}`));
     assert.notEqual(git(co, 'rev-parse', 'HEAD'), next, '--check changes nothing');
 
     r = w.burrow(co, ['update', '--dry-run']);
@@ -105,7 +110,7 @@ test('git checkout: --check reports new commits, update pulls and runs npm insta
     assert.equal(r.status, 0, r.stderr);
     assert.equal(git(co, 'rev-parse', 'HEAD'), next);
     assert.match(r.stdout, /Pulled 1 commit\(s\)/);
-    assert.match(r.stdout, /burrow is now 0\.1\.1/);
+    assert.match(r.stdout, new RegExp(`burrow is now ${NEXT_RE}`));
     assert.deepEqual(w.npmCalls(), [`${co}|install --no-audit --no-fund`]);
 
     r = w.burrow(co, ['update']);
@@ -117,7 +122,7 @@ test('git checkout with local changes is refused', () => {
   const w = world();
   try {
     const co = checkout(w);
-    w.bump('0.1.1');
+    w.bump(NEXT);
     writeFileSync(join(co, 'package.json'), '{}\n');
     const r = w.burrow(co, ['update']);
     assert.equal(r.status, 1);
@@ -143,7 +148,7 @@ test('global npm install: --check compares commits, update reinstalls into the s
     assert.match(r.stdout, /global npm install/);
     assert.match(r.stdout, /Up to date/);
 
-    const next = w.bump('0.1.1');
+    const next = w.bump(NEXT);
     r = w.burrow(pkgDir, ['update', '--check']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, new RegExp(`Newer commit available: ${first.slice(0, 7)} -> ${next.slice(0, 7)}`));
