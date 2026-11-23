@@ -14,7 +14,8 @@ events.setMaxListeners(50);
 
 // Places in the dashboard page a panel can add HTML to.
 export const SLOTS = [
-  'toolbar', // buttons in the top bar, left of Refresh
+  'toolbarMain', // always-visible items in the top bar (status, primary or contextual buttons)
+  'toolbar', // buttons that open a panel; listed in the top bar's "More" menu
   'headLead', 'rowLead', // a leading <th>/<td> on the project table
   'rowBadges', // after the project name
   'hostExtras', // after each hostname link (h and p in scope)

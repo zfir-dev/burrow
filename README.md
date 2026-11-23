@@ -220,6 +220,13 @@ POSTs need the same `X-Burrow: 1` header, so every feature gets the same login, 
 protection. Commands the dashboard runs get `BURROW_SOURCE=dashboard` in their environment.
 See [`src/dashboard/panels/README.md`](src/dashboard/panels/README.md) for the interface.
 
+The page is laid out to fit a 1280px-wide screen with every panel loaded, without scrolling
+sideways: the panels' buttons (**Shares**, **History**, **Uptime**, **Alerts**, **Hooks**,
+**Cleanup**, **Doctor**, **Backup**, **Sessions**) are in the **More** menu of the top bar, which
+otherwise keeps **Live**, **New project**, the bulk **Start**/**Stop**, **All logs**, **Refresh**
+and **Sign out** on one row. Badges after a project name (such as **hook failed**) wrap under the
+name, and rarely used row actions are in the row's **⋯** menu.
+
 The table stays within the window with every panel merged: each row shows **Logs**, **Up** and
 **Down**, and the rest (**Destroy…** and panel actions such as Edit, Stats and Restart) are in
 the row's **⋯** menu. Long hostnames are shortened with an ellipsis (hover for the full name), the

@@ -238,7 +238,7 @@ async function save(ctx, { project, file, text, up, action, create }) {
 }
 
 export const html = {
-  toolbar: '<li><button class="outline" @click="newProject">New project</button></li>',
+  toolbarMain: '<li><button class="outline" @click="newProject">New project</button></li>',
   rowActions: '<button class="secondary outline" x-show="canEdit(p)" @click="editProject(p)">Edit</button>',
   dialogs: `
 <dialog :open="formOpen" class="project-form">
