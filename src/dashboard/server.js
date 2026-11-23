@@ -353,13 +353,28 @@ export function createDashboard({ password, log = console.log, panels, persistSe
     return json(res, 404, { error: 'not found' });
   }
 
-  return createServer((req, res) => {
+  const server = createServer((req, res) => {
     handle(req, res).catch((e) => {
       log(`error: ${e.message}`);
       if (!res.headersSent) json(res, 500, { error: 'internal error' });
       else res.end();
     });
   });
+  // Background work of panels (export function start(ctx) -> stop function), for things that
+  // should happen with no browser open. Started once the server listens, stopped when it closes.
+  const stops = [];
+  server.once('listening', () => {
+    ready.then((P) => {
+      if (!server.listening) return;
+      const ctx = { log, events, loadConfig, invalidate: invalidateCloudflare, runCli, collect: () => collect(loadConfig()) };
+      for (const p of P.list) {
+        if (typeof p.start !== 'function') continue;
+        try { const stop = p.start(ctx); if (typeof stop === 'function') stops.push(stop); } catch (e) { log(`error: panel ${p.id}: ${e.message}`); }
+      }
+    }).catch(() => {});
+  });
+  server.once('close', () => { for (const stop of stops.splice(0)) { try { stop(); } catch {} } });
+  return server;
 }
 
 export function runDashboard({ port, host = '127.0.0.1' }) {

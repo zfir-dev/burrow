@@ -1,9 +1,11 @@
 // Uptime timeline: turn the event history (up/down/restart/destroy from the CLI and the
-// dashboard, health transitions from `burrow watch`) into per-project segments.
+// dashboard, health transitions from `burrow watch`, or from the dashboard when watch isn't
+// running: see health-observer.js) into per-project segments.
 // Statuses: up | degraded | down (not on purpose) | stopped (on purpose) | unknown.
 import { readFileSync } from 'node:fs';
 import { readEvents } from './history.js';
 import { watchStateFile } from './watch.js';
+import { healthState } from './health-observer.js';
 
 export const WINDOWS = { '1h': 3600e3, '24h': 24 * 3600e3, '7d': 7 * 24 * 3600e3 };
 
@@ -70,7 +72,7 @@ export function buildTimeline(events, { now = Date.now(), windowMs = WINDOWS['24
 // { project: timeline } for [{ project, running, startedAt, crashed }] (crashed: a pid file but no process).
 export function timelines(projects, { now = Date.now(), windowMs = WINDOWS['24h'] } = {}) {
   const all = readEvents({ limit: 5000 }).reverse();
-  const watch = readWatchState();
+  const watch = healthState(now); // burrow watch's state, or the dashboard's observations without it
   const out = {};
   for (const p of projects) {
     const evs = all.filter((e) => e.project === p.project);

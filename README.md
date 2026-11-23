@@ -466,11 +466,20 @@ bar is coloured **up**, **degraded**, **down**, **stopped** (on purpose) or **no
 the uptime percentage and the latest incidents. The bar is built from the event history: starts,
 stops and restarts from the CLI and the dashboard, plus health changes that `burrow watch`
 records (action `health`, source `watch`, e.g. `down: cloudflared is not running (was ok)`).
-The current state comes from the watch state, or from whether cloudflared is running.
 
-Stopped time and time with no data don't count against the percentage. Without
-`burrow watch`, a crash only shows from the moment the dashboard sees cloudflared isn't
-running. `GET /api/uptime?window=1h|24h|7d` returns
+Without `burrow watch` the dashboard records health changes itself (source `dashboard`): on
+every refresh of the project list and once a minute even with no browser open, it checks
+whether each started project's cloudflared is still running and what Cloudflare says about its
+tunnel, and writes a `health` event when that changes (a change has to be seen twice, 15 s
+apart, so a restart isn't a crash). It doesn't probe local ports (`burrow watch` does), and it
+can only see a crash while the dashboard is running. While `burrow watch` is active (its state
+was written in the last 5 minutes) it owns health changes and the dashboard records none.
+Projects stopped with `burrow down` aren't tracked; their starts and stops are already `up` and
+`down` events. The current state comes from the watch state (or the dashboard's own
+observations in `~/.local/state/burrow/watch/observed.json`), or from whether cloudflared is
+running.
+
+Stopped time and time with no data don't count against the percentage. `GET /api/uptime?window=1h|24h|7d` returns
 `projects: [{project, segments: [{from, to, status, pct}], uptimePct, incidents}]`.
 
 ### Sessions and two-factor sign-in
