@@ -63,6 +63,29 @@ test('a valid edit is saved; a stopped project is not started', async () => {
   } finally { await t.sb.cleanup(); }
 });
 
+test('an invalid hooks: section is rejected like any other error', async () => {
+  const t = setup();
+  try {
+    const before = readFileSync(t.file, 'utf8');
+    for (const [hooks, error] of [
+      ['hooks:\n  after_up: echo hi\n', /hooks\.after_up: unknown hook/],
+      ['hooks:\n  post_up:\n    run: echo hi\n    background: true\n', /only pre_up can run in the background/],
+      ['hooks:\n  pre_up:\n    run: npm run migrate\n    timout: 30\n', /unknown key\(s\) timout/],
+      ['hooks: echo hi\n', /"hooks" must be a mapping/],
+    ]) {
+      const r = await t.sb.run(['edit'], { cwd: t.project, env: t.env({ FAKE_EDIT_SOURCE: t.content('bad-hooks.yml', before + hooks) }) });
+      assert.equal(r.code, 1, r.stdout);
+      assert.match(r.stderr, error);
+      assert.match(r.stderr, /unchanged\. Your edits are in /);
+      assert.equal(readFileSync(t.file, 'utf8'), before);
+    }
+    const good = before + 'hooks:\n  pre_up: npm run migrate\n  post_down:\n    run: echo bye\n    timeout: 10\n';
+    const r = await t.sb.run(['edit'], { cwd: t.project, env: t.env({ FAKE_EDIT_SOURCE: t.content('good-hooks.yml', good) }) });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(readFileSync(t.file, 'utf8'), good);
+  } finally { await t.sb.cleanup(); }
+});
+
 test('an invalid edit is rejected and the original is kept', async () => {
   const t = setup();
   try {

@@ -3,7 +3,9 @@ import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, w
 import { tmpdir } from 'node:os';
 import { basename, delimiter, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import YAML from 'yaml';
 import { assertLabel } from './naming.js';
+import { parseHooks } from './hooks.js';
 import { findProjectFile, parseProject } from './project.js';
 import { readMeta, runningPid } from './process.js';
 
@@ -96,6 +98,9 @@ export async function edit(projectArg, opts = {}) {
     }
     try {
       proj = parseProject(text, file);
+      // hooks: is read by up/down, not by parseProject; check it here so a typo in a hook
+      // name or option is caught on save instead of on the next start.
+      parseHooks(YAML.parse(text) || {}, file);
       break;
     } catch (e) {
       console.error(`burrow: ${e.message}`);
