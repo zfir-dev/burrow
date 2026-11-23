@@ -30,6 +30,7 @@ function vendorAsset(path, entry = VENDOR[path]) {
 const BIN = fileURLToPath(new URL('../../bin/burrow.js', import.meta.url));
 const COOKIE = 'burrow_session';
 const SESSION_TTL = 12 * 60 * 60 * 1000;
+const BLOCKED_LOG_MS = 60 * 1000;
 
 const SECURITY_HEADERS = {
   'Content-Security-Policy':
@@ -143,6 +144,17 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
   const sessions = new Map(); // id -> exp (server-side, so logout really ends a session)
   const sessionInfo = new Map(); // id -> { createdAt, lastSeen, ip, agent } (for the Sessions panel)
   const limiter = new RateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
+  // Sign-ins refused by the rate limit go to the event history, at most one entry per IP per
+  // minute (with how many were left out), so a flood of attempts can't flood the history.
+  const blockedSeen = new Map(); // ip -> { at, suppressed }
+  const recordBlocked = (ip, retryAfter, now = Date.now()) => {
+    const b = blockedSeen.get(ip);
+    if (b && now - b.at < BLOCKED_LOG_MS) { b.suppressed++; return; }
+    const more = b?.suppressed ? ` (${b.suppressed} more since the last entry)` : '';
+    events.emit('event', { action: 'sign-in', ok: false, detail: `blocked by the rate limit from ${ip}${more}; retry in ${retryAfter}s` });
+    blockedSeen.set(ip, { at: now, suppressed: 0 });
+    if (blockedSeen.size > 10000) for (const [k, v] of blockedSeen) if (now - v.at >= BLOCKED_LOG_MS) blockedSeen.delete(k);
+  };
   const busy = new Set();
   const ready = (panels ? Promise.resolve(sortPanels(panels)) : loadPanels()).then(buildPanels);
   ready.catch((e) => log(`error: dashboard panels failed to load: ${e.message}`));
@@ -216,6 +228,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       const lim = limiter.check(ip);
       if (!lim.allowed) {
         log(`login rate-limited for ${ip}`);
+        recordBlocked(ip, lim.retryAfter);
         const msg = `Too many attempts. Try again in ${Math.ceil(lim.retryAfter / 60)} min.`;
         if (wantsJson) return json(res, 429, { error: msg, retryAfter: lim.retryAfter }, { 'Retry-After': String(lim.retryAfter) });
         return send(res, 429, LOGIN_HTML(`Too many attempts. Try again in ${Math.ceil(lim.retryAfter / 60)} min.`),
@@ -239,6 +252,7 @@ export function createDashboard({ password, log = console.log, panels } = {}) {
       if (totpEnabled() && !verifyCode(code)) {
         limiter.fail(ip);
         log(`login failed from ${ip}: two-factor code`);
+        events.emit('event', { action: 'sign-in', ok: false, detail: `${code ? 'wrong' : 'missing'} two-factor code from ${ip}` });
         const msg = code ? 'Wrong two-factor code.' : 'Enter the code from your authenticator app.';
         if (wantsJson) return json(res, 401, { error: msg, twoFactor: true });
         return send(res, 401, LOGIN_HTML(msg), 'text/html; charset=utf-8');

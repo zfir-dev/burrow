@@ -139,6 +139,30 @@ test('a real process killed with SIGTERM or SIGINT still leaves an entry', async
   ]);
 });
 
+test('HTTP: sign-ins refused by the rate limit are recorded once a minute per IP, never the password', async () => {
+  const d = await startDashboard();
+  try {
+    await d.get('/');
+    writeFileSync(historyFile(), '');
+    const login = (password) => fetch(`${d.base}/login`, {
+      method: 'POST', redirect: 'manual',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ password }),
+    });
+    for (let i = 0; i < 5; i++) assert.equal((await login(`guess-number-${i}-abc`)).status, 401);
+    const { PASSWORD } = await import('./helpers/dash.js');
+    for (const p of ['guess-number-5-abc', PASSWORD, 'guess-number-6-abc']) assert.equal((await login(p)).status, 429);
+    const got = readEvents().reverse();
+    assert.deepEqual(got.map((e) => [e.action, e.ok, e.source]), [
+      ...Array(5).fill(['sign-in', false, 'dashboard']), ['sign-in', false, 'dashboard'],
+    ]);
+    assert.match(got[5].detail, /^blocked by the rate limit from 127\.0\.0\.1; retry in \d+s$/);
+    assert.ok(d.logs.filter((l) => /login rate-limited/.test(l)).length === 3, 'every refusal is still logged');
+    const raw = readFileSync(historyFile(), 'utf8');
+    assert.ok(!raw.includes('guess-number') && !raw.includes(PASSWORD), 'no password in the history');
+  } finally { await d.close(); }
+});
+
 test('HTTP: dashboard sign-ins and sign-outs are recorded, never the password', async () => {
   const d = await startDashboard();
   try {

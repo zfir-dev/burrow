@@ -90,6 +90,11 @@ test('HTTP: list sessions, sign out others, two-factor setup/sign-in/turn off, s
     l = await login(d.base, PASSWORD, next);
     assert.equal(l.status, 200, l.j.error);
     assert.equal((await login(d.base, PASSWORD, next)).status, 401, 'replayed code');
+    const { readEvents } = await import('../src/history.js');
+    const twoFactor = readEvents({ limit: 100 }).filter((e) => e.action === 'sign-in' && /two-factor/.test(e.detail || '')).reverse();
+    assert.deepEqual(twoFactor.map((e) => [e.ok, e.detail]), [
+      [false, 'missing two-factor code from 127.0.0.1'], [false, 'wrong two-factor code from 127.0.0.1'], [false, 'wrong two-factor code from 127.0.0.1'],
+    ]);
     assert.equal((await login(d.base, 'wrong password!!', totp(setup.secret, Date.now() - 30000))).status, 401);
 
     // Turning it off needs confirmation and a fresh code.
