@@ -1,9 +1,9 @@
 import { loadConfig, requireConfig } from './config.js';
-import { Cloudflare } from './cloudflare.js';
+import { Cloudflare, apiBase } from './cloudflare.js';
 import { projectUrls } from './open.js';
 
 // Cloudflare GraphQL Analytics. BURROW_CF_API_BASE (tests only) moves it to the mock API.
-const endpoint = () => `${process.env.BURROW_CF_API_BASE || 'https://api.cloudflare.com/client/v4'}/graphql`;
+const endpoint = () => `${apiBase()}/graphql`;
 const log = (...a) => console.log(...a);
 
 export const QUERY = `query BurrowStats($zoneTag: string, $filter: ZoneHttpRequestsAdaptiveGroupsFilter_InputObject) {

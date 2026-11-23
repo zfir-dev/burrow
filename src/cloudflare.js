@@ -2,7 +2,20 @@
 const DEFAULT_BASE = 'https://api.cloudflare.com/client/v4';
 // BURROW_CF_API_BASE (environment only) points burrow at a mock API for tests
 // and the README screenshots. Never set it in normal use.
-const base = () => process.env.BURROW_CF_API_BASE || DEFAULT_BASE;
+// Under `node --test` (NODE_TEST_CONTEXT is set, also in spawned CLIs) the real
+// API is refused outright, so a test can never touch a real account.
+export function apiBase(env = process.env) {
+  const b = env.BURROW_CF_API_BASE || DEFAULT_BASE;
+  if (env.NODE_TEST_CONTEXT) {
+    let host = '';
+    try { host = new URL(b).hostname; } catch {}
+    if (host === 'cloudflare.com' || host.endsWith('.cloudflare.com')) {
+      throw new CloudflareError(`Refusing to call the real Cloudflare API (${host}) from a test: set BURROW_CF_API_BASE to a mock`);
+    }
+  }
+  return b;
+}
+const base = () => apiBase();
 
 export class CloudflareError extends Error {}
 
