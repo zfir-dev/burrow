@@ -90,7 +90,7 @@ export function updateSource(info, env = process.env) {
     const repo = info.pkg.repository;
     spec = typeof repo === 'string' ? repo : repo?.url || '';
   }
-  if (!spec) throw new Error('No update source: set BURROW_UPDATE_SOURCE (e.g. github:zfir-dev/burrow).');
+  if (!spec) throw new Error('No update source: set BURROW_UPDATE_SOURCE (e.g. github:zfir-dev/burrow-cli).');
   const { url, ref } = gitUrl(spec);
   return { spec, url, ref: isSha(ref) ? null : ref, installed };
 }

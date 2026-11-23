@@ -11,7 +11,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zfir-dev/burrow.git"
+    "url": "git+https://github.com/zfir-dev/burrow-cli.git"
   },
   "type": "module",
   "bin": {
@@ -37,9 +37,9 @@
     "qrcode-generator": "2.0.4",
     "yaml": "^2.9.1"
   },
-  "homepage": "https://github.com/zfir-dev/burrow#readme",
+  "homepage": "https://github.com/zfir-dev/burrow-cli#readme",
   "bugs": {
-    "url": "https://github.com/zfir-dev/burrow/issues"
+    "url": "https://github.com/zfir-dev/burrow-cli/issues"
   },
   "publishConfig": {
     "access": "public"
