@@ -74,6 +74,12 @@ Hooks are `/bin/sh` command lines. Doctor reads them with a small shell-word par
   or `$(…)` stays there; each `then`/`else` body and `case` arm starts in the directory the block
   began in; and after a block that `cd`s, later relative paths are *not checked* (it depends on
   which branch ran). Here-document bodies are skipped.
+- A `cd` in an `if`/`elif`/`while`/`until` **condition** is followed too, so
+  `if cd web && npm run build; then ./deploy.sh; fi` checks `./deploy.sh` in `web/`. The `then`/`do`
+  body runs where the condition succeeded; `else` and `elif` run where it failed (a failing `cd`
+  changes nothing). When the condition can end in different directories (`cd web || true`,
+  a `cd` followed by `;`, a `cd` in a pipeline) the paths in that branch are listed as
+  *not checked* instead of guessed. After the whole block the directory is still unknown.
 - What can't be known without running it is listed as *not checked* instead of being
   guessed: a command or `cd` target that is a `$VARIABLE` or `$(…)` output, function
   definitions, and anything unterminated.

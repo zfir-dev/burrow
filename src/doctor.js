@@ -58,7 +58,10 @@ function scriptProblem(tool, args, cwd) {
 // directory, or PATH); `npm run x` and friends also need script x in package.json.
 // Commands inside $(…), backticks, ( … ), { …; }, if/while/until/for/case are checked too
 // (see shell-words.js): a cd in a subshell or $(…) stays there, and a cd inside an if/loop/case
-// body makes the directory unknown after the block.
+// body makes the directory unknown after the block. A cd in an if/elif/while/until condition is
+// tracked: the then/do body runs where the condition succeeded, the else/elif where it failed
+// (a failing cd changes nothing); if those differ (cd … || cd …, a cd before a ';'), the
+// directory is unknown there. Nothing is ever executed.
 // -> { ok, detail, problems: [...], checked: [...], unchecked: [...], notes: [...] }
 export function checkHookCommand(run, cwd, path = process.env.PATH || '') {
   const problems = [];
@@ -71,6 +74,9 @@ export function checkHookCommand(run, cwd, path = process.env.PATH || '') {
   const lastDepth = new Map(); // scope -> depth of its previous command
   const entryDirs = new Map(); // scope -> [directory when each block depth was entered]
   const parentOf = (s) => s.slice(0, s.lastIndexOf('/'));
+  const conds = new Map(); // `${scope}|${depth}` -> { S, F, thenUsed }: possible directories after a condition succeeded / failed
+  const single = (set) => (set.size === 1 ? [...set][0] : null);
+  const union = (...sets) => new Set(sets.flatMap((x) => [...x]));
   for (const cmd of parseCommands(run)) {
     const scope = cmd.scope || '';
     if (!dirs.has(scope)) dirs.set(scope, dirs.get(parentOf(scope)) ?? null);
@@ -81,9 +87,43 @@ export function checkHookCommand(run, cwd, path = process.env.PATH || '') {
     lastDepth.set(scope, cmd.depth);
     // A then/else/case-arm body starts where the block began, not where the last branch cd'd to.
     if (cmd.branchStart && cmd.depth > 0 && entry[cmd.depth] !== undefined) dirs.set(scope, entry[cmd.depth]);
+    const ckey = `${scope}|${cmd.depth}`;
+    const prior = conds.get(ckey);
+    if (cmd.branchStart && cmd.depth > 0 && prior) {
+      const k = cmd.branchKind;
+      if ((k === 'then' || k === 'do') && !prior.thenUsed) { prior.thenUsed = true; dirs.set(scope, single(prior.S)); }
+      else if (k === 'else' || k === 'elif') dirs.set(scope, single(prior.F));
+    }
+    // A condition: track where it can leave us when it succeeds (S) and when it fails (F).
+    let rec = null;
+    let runSet = null;
+    if (cmd.cond) {
+      const pre = dirs.get(scope) ?? null;
+      if (cmd.cond === 'start' || !prior) {
+        rec = { S: new Set([pre]), F: new Set([pre]), thenUsed: false, first: true };
+        conds.set(ckey, rec);
+        runSet = new Set([pre]);
+      } else {
+        rec = prior;
+        runSet = cmd.op === '&&' ? rec.S : cmd.op === '||' ? rec.F : union(rec.S, rec.F);
+      }
+      dirs.set(scope, single(runSet));
+    }
+    let condDone = false;
+    // nextFn: how this command changes the directory (a static cd), or null.
+    const finishCond = (nextFn) => {
+      if (!rec || condDone) return;
+      condDone = true;
+      const apply = (set) => (nextFn ? new Set([...set].map(nextFn)) : set);
+      if (rec.first) { rec.first = false; rec.S = apply(runSet); rec.F = new Set(runSet); }
+      else if (cmd.op === '&&') { const S = apply(rec.S); rec.F = union(rec.F, rec.S); rec.S = S; }
+      else if (cmd.op === '||') { rec.S = union(rec.S, apply(rec.F)); }
+      else { const all = union(rec.S, rec.F); rec.S = apply(all); rec.F = all; }
+      if (nextFn) cdInBlock.add(scope);
+    };
     let dir = dirs.get(scope);
     const setDir = (d) => { dir = d; dirs.set(scope, d); if (cmd.depth > 0) cdInBlock.add(scope); };
-    if (cmd.unsupported) { unchecked.push(cmd.unsupported); continue; }
+    if (cmd.unsupported) { finishCond(null); unchecked.push(cmd.unsupported); continue; }
     let words = cmd.words.slice();
     while (words.length && isAssignment(words[0])) words.shift();
     while (words.length && !words[0].quoted && WRAPPERS.has(words[0].text)) {
@@ -93,10 +133,30 @@ export function checkHookCommand(run, cwd, path = process.env.PATH || '') {
         if (w === 'nice' && opt === '-n') words.shift();
       }
     }
-    if (!words.length) continue;
+    if (!words.length) { finishCond(null); continue; }
     const [head, ...args] = words;
+    if (!(head.text === 'cd' && !head.expands)) finishCond(null);
     if (head.expands) { unchecked.push(`${head.text} (${/[`(]/.test(head.text) ? 'command output' : 'variable'})`); continue; }
     const name = head.text;
+    if (name === 'cd' && rec) {
+      // cd in a condition: the new directory depends on how the condition ends.
+      const target = args[0];
+      const isolated = ['|', '&'].includes(cmd.op); // a pipeline stage or background job: a subshell
+      const resolve = (d) => {
+        if (!target) return process.env.HOME || d;
+        if (target.expands || target.text === '-') return null;
+        if (isAbsolute(target.text)) return target.text;
+        return d === null ? null : join(d, target.text);
+      };
+      if (!isolated) {
+        if (!target || (!target.expands && target.text !== '-' && (isAbsolute(target.text) || dir !== null))) {
+          const next = resolve(dir);
+          if (target && dir !== null && !existsSync(next)) problems.push(`cd ${target.text}: no such directory in ${dir}`);
+        } else unchecked.push(`cd ${target.text}`);
+      }
+      finishCond(isolated ? null : resolve);
+      continue;
+    }
     if (name === 'cd') {
       const target = args[0];
       if (!target) { setDir(process.env.HOME || dir); continue; }
