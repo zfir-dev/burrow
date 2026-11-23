@@ -124,12 +124,12 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | `burrow add [project]`           | Create a `tunnel.yml` by answering prompts, or non-interactively with `--app`, `--path`, `--service` ([details](docs/add.md)) |
 | `burrow up [project]`            | Create or reuse tunnel `burrow-<project>`, PUT its ingress config, upsert the CNAMEs (and remove stale ones tagged for this project), then (re)start `cloudflared` in the background |
 | `burrow edit [project]`          | Open `tunnel.yml` in `$EDITOR` (or `vi`/`nano`), validate it on save (a broken edit never replaces the file), and offer to re-run `up` if the project is running; `--yes`, `--no-apply` ([details](docs/edit.md)) |
-| `burrow share <port>`            | Share a local port on a temporary `<random>.<domain>` hostname; Ctrl+C, `burrow down` or `burrow destroy` removes it ([details](docs/share.md)) |
+| `burrow share <port>`            | Share a local port on a temporary `<random>.<domain>` hostname; Ctrl+C, `burrow down` or `burrow destroy` removes it, `--expires 2h` ends it on its own ([details](docs/share.md)) |
 | `burrow down [project]`          | Stop that project's `cloudflared` only. The tunnel and DNS records are kept, so the next `up` is quick |
-| `burrow restart [project]`       | Re-sync the tunnel config and DNS and restart `cloudflared` (same as `up`, which reuses the tunnel). With no project, restarts every connector that is running now; `--dry-run` shows the plan. Detached shares are restarted on the same hostname, shares still attached to a `burrow share` in the foreground are skipped ([details](docs/share.md#restart-completion-and-export)) |
+| `burrow restart [project]`       | Re-sync the tunnel config and DNS and restart `cloudflared` (same as `up`, which reuses the tunnel). With no project, restarts every connector that is running now; `--dry-run` shows the plan, `--no-hooks` skips the `pre_up`/`post_up` hooks. Detached shares are restarted on the same hostname, shares still attached to a `burrow share` in the foreground are skipped ([details](docs/share.md#restart-completion-and-export)) |
 | `burrow down`                    | Stop **every** running burrow connector (each pid in `~/.local/state/burrow/`) |
 | `burrow export [file]` / `burrow import <file>` | Export remembered project configs to YAML/JSON (tunnel.yml fields only, never tokens or passwords) and import them on another machine ([details](docs/export-import.md)) |
-| `burrow destroy [project]`       | Stop `cloudflared`, delete DNS records tagged `burrow:<project>`, delete the tunnel's connections and the tunnel. `burrow down <project> --purge` does the same |
+| `burrow destroy [project]`       | Stop `cloudflared`, delete DNS records tagged `burrow:<project>`, delete the tunnel's connections and the tunnel. `burrow down <project> --purge` does the same. DNS in a zone that can't be read right now is queued and retried by `burrow prune` ([details](docs/prune.md#queued-dns-deletions)) |
 | `burrow url [project]` / `burrow open [project] [service]` | Print a project's `https://` URLs (`--plain` for URLs only), or open one in the browser (`$BROWSER`, `xdg-open` or `open`; `--print` just prints it). Inside a project directory `burrow open mail` opens the `mail` service |
 | `burrow destroy --all`           | Delete every `burrow-*` tunnel and every `burrow:*` DNS record, and stop all local connectors. Asks `[y/N]` first; `--yes` skips the prompt (needed in non-interactive shells) |
 | `burrow prune`                   | Find orphaned `burrow:*` DNS records and `burrow-*` tunnels with no local state; lists them and asks before deleting (`--dry-run`, `--yes`) ([details](docs/prune.md)) |
@@ -140,8 +140,8 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | `burrow dashboard down`          | Stop the dashboard server and its tunnel connector (tunnel and DNS are kept) |
 | `burrow completion bash\|zsh`    | Print a completion script for commands, options and project names. Add `source <(burrow completion zsh)` (or `bash`) to your shell rc file |
 | `burrow dashboard status`        | Server, connector, URL, whether a password is set |
-| `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state (`--json` for a machine-readable array) |
-| `burrow status [project]`        | Local process, tunnel health, DNS records (`--json` for an object with `running`, `pid`, `tunnel`, `records`) |
+| `burrow ls`                      | List `burrow-*` tunnels with their hostnames and local running state (`--json` for a machine-readable array). A zone whose DNS can't be read is reported, not fatal ([details](docs/domains.md#when-a-zone-cant-be-read)) |
+| `burrow status [project]`        | Local process, tunnel health, DNS records (`--json` for an object with `running`, `pid`, `tunnel`, `records`, `zoneError`) |
 | `burrow stats [project]`         | Requests, bandwidth and 2xx/3xx/4xx/5xx counts per hostname from Cloudflare's GraphQL Analytics (`--since 24h`, `--json`). Needs **Zone > Analytics > Read** ([details](docs/stats.md)) |
 | `burrow logs [project]`          | Show the cloudflared log (`-n 200`, `--follow`) |
 | `burrow watch [projects...]`     | Check connectors, tunnel health and local service ports every `--interval` seconds and alert on changes through `BURROW_ALERT_WEBHOOK` (JSON; Slack/Discord-compatible) and/or `BURROW_ALERT_NTFY`; `--debounce`, `--once` for cron, `--install-service` for a systemd unit ([details](docs/alerts.md)) |
@@ -220,6 +220,13 @@ POSTs need the same `X-Burrow: 1` header, so every feature gets the same login, 
 protection. Commands the dashboard runs get `BURROW_SOURCE=dashboard` in their environment.
 See [`src/dashboard/panels/README.md`](src/dashboard/panels/README.md) for the interface.
 
+The page is laid out to fit a 1280px-wide screen with every panel loaded, without scrolling
+sideways: the panels' buttons (**Shares**, **History**, **Uptime**, **Alerts**, **Hooks**,
+**Cleanup**, **Doctor**, **Backup**, **Sessions**) are in the **More** menu of the top bar, which
+otherwise keeps **Live**, **New project**, the bulk **Start**/**Stop**, **All logs**, **Refresh**
+and **Sign out** on one row. Badges after a project name (such as **hook failed**) wrap under the
+name, and rarely used row actions are in the row's **⋯** menu.
+
 The table stays within the window with every panel merged: each row shows **Logs**, **Up** and
 **Down**, and the rest (**Destroy…** and panel actions such as Edit, Stats and Restart) are in
 the row's **⋯** menu. Long hostnames are shortened with an ellipsis (hover for the full name), the
@@ -260,7 +267,9 @@ project name, so a rename really replaces the project in Cloudflare, and it's do
    `~/.config/burrow/projects/` is renamed to `<new>.tunnel.yml`. The new name is remembered.
 4. Optionally `burrow up <new>` creates the new tunnel and DNS records straight away.
 
-Old URLs stop working. The old project's log file is kept under its old name.
+Old URLs stop working. The project's local state moves with it: its cloudflared log
+(`<old>.log` becomes `<new>.log`, appended to one that already exists), the background `pre_up`
+log, and its `burrow watch` state. The event history and hook results keep the old name.
 `POST /api/projects/<old>/rename {to, confirm: true, up}`; `dryRun: true` only returns the plan.
 
 ### Local port health
@@ -323,13 +332,20 @@ where it came from:
 - `boot`: `burrow autostart` from the systemd unit
 
 Dashboard **sign-in** (ok or wrong password, with the client IP) and **sign-out** are recorded
-too, as `dashboard` events; the password never is. Attempts refused by the rate limit aren't.
+too, as `dashboard` events; the password never is. So are wrong or missing two-factor codes, and
+sign-ins refused by the rate limit (5 failures per IP in 15 minutes): one entry per IP per
+minute, `blocked by the rate limit from <ip>; retry in <n>s`, saying how many more were refused
+since the previous entry. The server log still has every refused attempt.
 
 A run that is cut short still leaves an entry, marked failed unless it exited with code 0:
 `stopped by SIGINT` (Ctrl+C), `stopped by SIGTERM` / `SIGHUP`, or `exited before finishing`
 when a command calls `process.exit()`. The exit code stays what it was (130 for Ctrl+C,
 143 for SIGTERM), and a command with its own Ctrl+C cleanup (such as `share`) still runs it.
-Only `kill -9` (SIGKILL) can't be caught and leaves no entry.
+Only `kill -9` (SIGKILL) leaves no entry: the kernel ends the process without running any of
+its code, so nothing can be written. The same goes for a power loss or the OOM killer. If a
+command seems to be missing from the history, check whether it was killed that way (for example
+`journalctl -k` for the OOM killer); its effects (a running connector, DNS records) are still
+visible in the project table.
 
 Filter by project or source. Read-only commands (`ls`, `status`, `logs`, `stats`, …) and
 `--dry-run` aren't recorded. Events are JSON Lines in `~/.local/state/burrow/history/events.jsonl`
@@ -367,6 +383,15 @@ DNS records are checked in every zone burrow knows about: `BURROW_DOMAIN`'s, the
 projects with their own [`domain:`](docs/domains.md), and zones cached from earlier runs. The
 page lists the zones it checked; a zone whose DNS can't be read (for example a domain since
 removed from the account) is shown as **not scanned** and skipped, and the rest still works.
+That includes `BURROW_DOMAIN`'s own zone: if it can't be found, the scan and deletes still run
+for the other zones, and the default domain appears as **not scanned** with the reason.
+
+If a project is destroyed (or deleted from the dashboard) while one of those zones can't be
+read, the tunnel is still deleted and its DNS deletion is queued in
+`~/.local/state/burrow/cleanup/pending.json` (mode 600) instead of being forgotten. The panel
+lists queued deletions under **Queued DNS deletions** with **Retry now**
+(`POST /api/cleanup/pending/retry`); `burrow prune` retries them too. A project that has been
+set up again by then keeps its records and the entry is dropped.
 
 ### Bulk actions and auto-start
 
@@ -409,9 +434,12 @@ shares with their link, target and time left. **+1 hour** resets the expiry to a
 **Stop** asks first, then stops cloudflared and deletes the share's tunnel and DNS record
 (`burrow down share-<name>`).
 
-The dashboard stops expired shares within about 30 seconds. A share that expired while the
-dashboard was off is stopped when it next starts. A share started in a terminal with plain
-`burrow share` is listed, but you stop it there with Ctrl+C, and it has no expiry.
+A share with an expiry is removed on time even when the dashboard isn't running: each one has
+a small background expiry watcher ([details](docs/share.md#expiry)). The dashboard also stops
+expired shares within about 30 seconds, and one that expired while it was off when it starts. A share started in a terminal with
+`burrow share` (with or without `--expires`) is listed too and can be extended or stopped
+here: the dashboard updates its state file and that process removes the share itself
+([details](docs/share.md#from-the-dashboard)).
 
 | Endpoint | Does |
 | --- | --- |
@@ -459,11 +487,20 @@ bar is coloured **up**, **degraded**, **down**, **stopped** (on purpose) or **no
 the uptime percentage and the latest incidents. The bar is built from the event history: starts,
 stops and restarts from the CLI and the dashboard, plus health changes that `burrow watch`
 records (action `health`, source `watch`, e.g. `down: cloudflared is not running (was ok)`).
-The current state comes from the watch state, or from whether cloudflared is running.
 
-Stopped time and time with no data don't count against the percentage. Without
-`burrow watch`, a crash only shows from the moment the dashboard sees cloudflared isn't
-running. `GET /api/uptime?window=1h|24h|7d` returns
+Without `burrow watch` the dashboard records health changes itself (source `dashboard`): on
+every refresh of the project list and once a minute even with no browser open, it checks
+whether each started project's cloudflared is still running and what Cloudflare says about its
+tunnel, and writes a `health` event when that changes (a change has to be seen twice, 15 s
+apart, so a restart isn't a crash). It doesn't probe local ports (`burrow watch` does), and it
+can only see a crash while the dashboard is running. While `burrow watch` is active (its state
+was written in the last 5 minutes) it owns health changes and the dashboard records none.
+Projects stopped with `burrow down` aren't tracked; their starts and stops are already `up` and
+`down` events. The current state comes from the watch state (or the dashboard's own
+observations in `~/.local/state/burrow/watch/observed.json`), or from whether cloudflared is
+running.
+
+Stopped time and time with no data don't count against the percentage. `GET /api/uptime?window=1h|24h|7d` returns
 `projects: [{project, segments: [{from, to, status, pct}], uptimePct, incidents}]`.
 
 ### Sessions and two-factor sign-in
@@ -472,8 +509,11 @@ running. `GET /api/uptime?window=1h|24h|7d` returns
 when each signed in and when it was last active. Your own session is marked **this browser**.
 You can sign out one session, **Sign out other sessions**, or **Sign out everywhere** (asks
 first, and signs you out too). Sessions are listed by an opaque handle; session ids never leave
-the server. Sessions still last 12 hours, and restarting the dashboard or changing its password
-ends them all.
+the server. Sessions last 12 hours and survive a restart of `burrow dashboard`: the session
+list and its signing secret are kept in `~/.local/state/burrow/dashboard/sessions.json` (mode 600,
+no password in it). Expired sessions are dropped when it is loaded, signing out (one, others or
+everywhere) is saved at once, and changing the dashboard password still ends every session.
+Deleting `sessions.json` and restarting the dashboard ends them all too.
 
 **Two-factor sign-in** is optional and off by default. Turning it on makes sign-in ask for a
 6-digit code from an authenticator app (TOTP, SHA-1, 30 s; works with any common app):

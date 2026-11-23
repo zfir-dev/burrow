@@ -60,6 +60,7 @@ test('status --json without Cloudflare config', async () => {
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(JSON.parse(r.stdout), {
       project: 'acme-shop', running: false, pid: null, log: JSON.parse(r.stdout).log, cloudflare: false, tunnel: null, records: [],
+      recordsKnown: true, zoneError: null, zoneErrors: [],
     });
   } finally {
     await sb.cleanup();
