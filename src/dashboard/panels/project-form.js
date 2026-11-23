@@ -10,6 +10,7 @@ import { readMeta, runningPid, saveMeta } from '../../process.js';
 import { isShare } from '../../share.js';
 import { defaultImportDir } from '../../transfer.js';
 import { Cloudflare } from '../../cloudflare.js';
+import { moveProjectState } from '../../rename-state.js';
 import { formFromText, renderNew, renderEdit, renameText } from '../../project-form.js';
 import { projectDomain, readZoneCache } from '../../zones.js';
 
@@ -152,7 +153,7 @@ function assertNew(project) {
 // name, so it is done the safe way: the project must be stopped; `burrow destroy <old>`
 // deletes the old tunnel and DNS records first (if that fails nothing else changes); then
 // tunnel.yml gets the new `project:` (a file in the import directory is also renamed),
-// the new name is remembered, and `burrow up <new>` creates a fresh tunnel and records.
+// the new name is remembered, its log files and watch state are moved, and `burrow up <new>` creates a fresh tunnel and records.
 async function rename(ctx, from) {
   try { assertLabel(from, 'project'); } catch { return ctx.json(400, { error: 'bad project' }) ?? true; }
   const file = editableFile(from);
@@ -198,6 +199,9 @@ async function rename(ctx, from) {
       rmSync(file, { force: true });
     } else writeFileSync(file, text);
     saveMeta(to, { project: to, file: plan.file, hostnames: [] });
+    // Logs and watch state follow the project (before `up`, which appends to the new log).
+    const moved = moveProjectState(from, to);
+    if (moved.length) d.output += `\nMoved ${moved.length} state file(s) to ${to}`;
     ctx.events.emit('event', { action: 'rename', project: to, ok: true, source: 'dashboard', detail: `from ${from}` });
     const out = { ok: true, renamed: true, ...plan, running: false, output: d.output };
     if (body.up === true) {

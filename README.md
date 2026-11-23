@@ -260,7 +260,9 @@ project name, so a rename really replaces the project in Cloudflare, and it's do
    `~/.config/burrow/projects/` is renamed to `<new>.tunnel.yml`. The new name is remembered.
 4. Optionally `burrow up <new>` creates the new tunnel and DNS records straight away.
 
-Old URLs stop working. The old project's log file is kept under its old name.
+Old URLs stop working. The project's local state moves with it: its cloudflared log
+(`<old>.log` becomes `<new>.log`, appended to one that already exists), the background `pre_up`
+log, and its `burrow watch` state. The event history and hook results keep the old name.
 `POST /api/projects/<old>/rename {to, confirm: true, up}`; `dryRun: true` only returns the plan.
 
 ### Local port health

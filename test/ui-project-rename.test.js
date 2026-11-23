@@ -59,10 +59,23 @@ test('HTTP: rename needs the project stopped, then moves tunnel, DNS and state t
     cf.state.tunnels.push({ id: 't-taken', name: 'burrow-taken', status: 'inactive', connections: [] });
     assert.equal((await d.post(url, { to: 'taken', confirm: true })).status, 409, 'an existing Cloudflare tunnel is never taken over');
 
+    // Local state that should follow the project.
+    writeFileSync(join(sb.state, 'acme-shop.log'), '2026-11-21T10:00:00Z INF old connector line\n');
+    mkdirSync(join(sb.state, 'hooks'), { recursive: true });
+    writeFileSync(join(sb.state, 'hooks', 'acme-shop.log'), 'next dev output\n');
+    mkdirSync(join(sb.state, 'watch'), { recursive: true });
+    writeFileSync(join(sb.state, 'watch', 'state.json'), JSON.stringify({ 'acme-shop': { status: 'ok', since: 1 }, blog: { status: 'down', since: 2 } }));
+
     r = await d.post(url, { to: 'acme-store', confirm: true, up: true });
     j = await r.json();
     assert.equal(r.status, 200, j.output || j.error);
     assert.equal(j.renamed, true);
+    assert.match(j.output, /Moved 3 state file\(s\) to acme-store/);
+    assert.ok(!existsSync(join(sb.state, 'acme-shop.log')), 'old log moved');
+    assert.match(readFileSync(join(sb.state, 'acme-store.log'), 'utf8'), /^2026-11-21T10:00:00Z INF old connector line\n/, 'old lines first, new connector appends');
+    assert.ok(!existsSync(join(sb.state, 'hooks', 'acme-shop.log')));
+    assert.equal(readFileSync(join(sb.state, 'hooks', 'acme-store.log'), 'utf8'), 'next dev output\n');
+    assert.deepEqual(JSON.parse(readFileSync(join(sb.state, 'watch', 'state.json'), 'utf8')), { blog: { status: 'down', since: 2 }, 'acme-store': { status: 'ok', since: 1 } });
     assert.deepEqual(names(), ['burrow-acme-store', 'burrow-taken']);
     assert.deepEqual(recordNames(), ['acme-store.example.dev', 'api-acme-store.example.dev']);
     assert.match(readFileSync(file, 'utf8'), /^# acme shop\nproject: acme-store\n/);
@@ -76,6 +89,17 @@ test('HTTP: rename needs the project stopped, then moves tunnel, DNS and state t
     const js = await (await d.get('/panels.js')).text();
     assert.doesNotThrow(() => new Script(js), 'the panel script parses');
   } finally { await d.close(); }
+});
+
+test('moveProjectState appends to a log the new name already has, and is a no-op without files', async () => {
+  const { moveProjectState } = await import('../src/rename-state.js');
+  writeFileSync(join(sb.state, 'old-demo.log'), 'old\n');
+  writeFileSync(join(sb.state, 'new-demo.log'), 'earlier project\n');
+  assert.deepEqual(moveProjectState('old-demo', 'new-demo'), [join(sb.state, 'new-demo.log')]);
+  assert.equal(readFileSync(join(sb.state, 'new-demo.log'), 'utf8'), 'earlier project\nold\n');
+  assert.ok(!existsSync(join(sb.state, 'old-demo.log')));
+  assert.deepEqual(moveProjectState('nothing-here', 'still-nothing'), []);
+  assert.deepEqual(moveProjectState('same', 'same'), []);
 });
 
 test('HTTP: a project file in the import directory is renamed with the project', async () => {
