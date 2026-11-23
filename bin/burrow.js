@@ -100,6 +100,12 @@ program.command('share <target>')
   .option('--expires <duration>', 'remove the share after 30m, 2h, 1d, … (1 minute to 30 days)')
   .option('--dry-run', 'print the plan only')
   .action(wrap(async (t, o) => (await import('../src/share.js')).share(t, o)));
+// Internal: the per-share expiry watcher started by `share --detach --expires` (src/share-expiry.js).
+program.command('_share-expire <project>', { hidden: true })
+  .action(wrap(async (project) => {
+    const { watchExpiry } = await import('../src/share-expiry.js');
+    await watchExpiry(project, { remove: (p) => cmd.down(p, {}) });
+  }));
 program.command('down [project]')
   .description('stop cloudflared (all running projects when none is given); keeps tunnel and DNS')
   .option('-f, --file <path>', 'path to tunnel.yml')

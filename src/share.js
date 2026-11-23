@@ -3,6 +3,7 @@ import { readdirSync } from 'node:fs';
 import { loadConfig, requireConfig, stateDir } from './config.js';
 import { Cloudflare } from './cloudflare.js';
 import { tunnelName, recordComment, tunnelTarget, assertLabel } from './naming.js';
+import { ensureExpiryWatcher } from './share-expiry.js';
 import { startConnector, stopConnector, runningPid, saveMeta, readMeta, removeMeta, logFile } from './process.js';
 
 // A share is a throwaway project: tunnel burrow-share-<label>, hostname
@@ -138,6 +139,7 @@ export async function restartShare(project, opts = {}) {
   await stopConnector(project);
   const pid = startConnector(project, await cf.getTunnelToken(tunnel.id), cfg.cloudflared);
   saveMeta(project, { ...meta, tunnelId: tunnel.id, ownerPid: null });
+  ensureExpiryWatcher(project); // e.g. after a reboot: the expiry still applies
   log(`${project}: restarted cloudflared (pid ${pid}) for https://${meta.hostname} -> ${meta.target}`);
   return 'restarted';
 }
@@ -184,7 +186,8 @@ export async function share(target, opts = {}) {
     throw e;
   }
   log(`Sharing ${url} at https://${hostname} (cloudflared pid ${pid}, log ${logFile(project)})`);
-  if (expiresAt) log(`Expires at ${expiresAt}${opts.detach ? ' (the dashboard stops it then, if it is running)' : ''}.`);
+  if (expiresAt) log(`Expires at ${expiresAt}${opts.detach ? ' (a background watcher removes it then)' : ''}.`);
+  if (opts.detach && expiresAt) ensureExpiryWatcher(project);
   if (opts.detach) {
     log(`Running in the background. Remove it with "burrow down ${project}" (or "burrow down").`);
     return;

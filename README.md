@@ -434,8 +434,9 @@ shares with their link, target and time left. **+1 hour** resets the expiry to a
 **Stop** asks first, then stops cloudflared and deletes the share's tunnel and DNS record
 (`burrow down share-<name>`).
 
-The dashboard stops expired shares within about 30 seconds. A share that expired while the
-dashboard was off is stopped when it next starts. A share started in a terminal with
+A share with an expiry is removed on time even when the dashboard isn't running: each one has
+a small background expiry watcher ([details](docs/share.md#expiry)). The dashboard also stops
+expired shares within about 30 seconds, and one that expired while it was off when it starts. A share started in a terminal with
 `burrow share` (with or without `--expires`) is listed too and can be extended or stopped
 here: the dashboard updates its state file and that process removes the share itself
 ([details](docs/share.md#from-the-dashboard)).

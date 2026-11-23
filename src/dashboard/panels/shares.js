@@ -9,6 +9,7 @@ import { readdirSync } from 'node:fs';
 import { assertLabel } from '../../naming.js';
 import { loadConfig, stateDir } from '../../config.js';
 import { readMeta, runningPid, saveMeta } from '../../process.js';
+import { ensureExpiryWatcher } from '../../share-expiry.js';
 import { SHARE_PREFIX, isShare, randomLabel, targetUrl, ownerAlive, requestStop } from '../../share.js';
 import { runCli } from '../server.js';
 
@@ -119,9 +120,9 @@ export async function route(ctx) {
     const project = SHARE_PREFIX + label;
     const r = await ctx.withBusy(project, async () => {
       ctx.log(`share ${url} as ${label} for ${minutes || 'no'} minute(s) (requested from ${ctx.clientIp})`);
-      const run = await ctx.runCli(['share', url, '--name', label, '--detach']);
+      // --expires starts the share's expiry watcher, so it ends on time without the dashboard.
+      const run = await ctx.runCli(['share', url, '--name', label, '--detach', ...(minutes ? ['--expires', `${minutes}m`] : [])]);
       const meta = readMeta(project);
-      if (run.ok && meta) saveMeta(project, { ...meta, expiresAt: expiryFrom(minutes) });
       ctx.invalidate();
       return { ok: run.ok && !!meta, output: run.output, share: listShares().find((s) => s.project === project) || null };
     });
@@ -139,6 +140,7 @@ export async function route(ctx) {
     let minutes;
     try { minutes = parseExpiry(body.expiresIn); } catch (e) { return ctx.json(400, { error: e.message }) ?? true; }
     saveMeta(project, { ...meta, expiresAt: expiryFrom(minutes) });
+    ensureExpiryWatcher(project); // a running watcher just re-reads the new expiry
     return ctx.json(200, { ok: true, share: listShares().find((s) => s.project === project) }) ?? true;
   }
   if (body.confirm !== true) return ctx.json(400, { error: 'confirm stopping the share (confirm: true)' }) ?? true;
