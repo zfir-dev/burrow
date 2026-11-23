@@ -28,13 +28,17 @@ Cloudflare objects are named and tagged so burrow can find them again:
 ## Install
 
 Requires Node 18+ and [`cloudflared`](https://github.com/cloudflare/cloudflared/releases).
-burrow isn't published to the npm registry (`"private": true`); install it from git or from a checkout.
-
-From git (installs `burrow` globally, with its dependencies):
+From npm (the package is `burrow-cli`; it installs the `burrow` command globally, with its dependencies):
 
 ```sh
-npm install -g git+ssh://git@github.com/<owner>/burrow.git        # or git+https://…
-npm install -g git+ssh://git@github.com/<owner>/burrow.git#main   # a branch or tag
+npm install -g burrow-cli
+```
+
+Or from git, to follow a branch or a tag:
+
+```sh
+npm install -g github:zfir-dev/burrow          # or git+ssh://git@github.com/zfir-dev/burrow.git
+npm install -g github:zfir-dev/burrow#main     # a branch or tag
 ```
 
 From a checkout (handy while hacking on it, since edits apply immediately):
@@ -45,7 +49,7 @@ npm install
 npm link          # or: npm install -g .
 ```
 
-Check it with `burrow --version`. Remove it with `npm uninstall -g burrow` (or `npm unlink -g burrow`).
+Check it with `burrow --version`. Remove it with `npm uninstall -g burrow-cli` (or `npm unlink -g burrow-cli` for a checkout).
 
 With nvm, global packages belong to the active Node version, so reinstall after switching
 versions. The systemd unit (if you use one) records the Node binary path when it is installed.
@@ -120,7 +124,7 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | Command                          | What it does |
 | -------------------------------- | ------------ |
 | `burrow init`                    | Write the config template, or verify the token and access |
-| `burrow update`                  | Update burrow itself: a git checkout gets `git pull --ff-only` + `npm install`, a global npm install is reinstalled from its git source; `--check` only reports newer commits ([details](docs/update.md)) |
+| `burrow update`                  | Update burrow itself: a git checkout gets `git pull --ff-only` + `npm install`, a global npm install is reinstalled (`npm i -g burrow-cli@latest` for a registry install, or from its git source); `--check` only reports newer commits ([details](docs/update.md)) |
 | `burrow add [project]`           | Create a `tunnel.yml` by answering prompts, or non-interactively with `--app`, `--path`, `--service` ([details](docs/add.md)) |
 | `burrow up [project]`            | Create or reuse tunnel `burrow-<project>`, PUT its ingress config, upsert the CNAMEs (and remove stale ones tagged for this project), then (re)start `cloudflared` in the background |
 | `burrow edit [project]`          | Open `tunnel.yml` in `$EDITOR` (or `vi`/`nano`), validate it on save (a broken edit never replaces the file), and offer to re-run `up` if the project is running; `--yes`, `--no-apply` ([details](docs/edit.md)) |
@@ -569,7 +573,7 @@ output are never recorded, because they can hold secrets. Dry runs aren't record
 The page footer shows the burrow version and whether an update is available. While a page is
 open, the dashboard runs `burrow update --check --json` at most once a day and caches the
 result in `~/.local/state/burrow/cache/update.json`. For a git checkout that's a `git fetch`;
-for a global npm install it's a `git ls-remote` on the install source. **Check for updates**
+for a global npm install from the registry it's `npm view burrow-cli version`, and from git a `git ls-remote` on the install source. **Check for updates**
 runs it now. When newer commits exist, an **Update available** button opens the version
 change, the new commits, and the commands to run in a terminal (`burrow update`, then
 `burrow dashboard up`). Installing isn't done from the browser. **Remind me later** hides the

@@ -1,5 +1,5 @@
 {
-  "name": "burrow",
+  "name": "burrow-cli",
   "version": "0.1.0",
   "description": "burrow: manage Cloudflare Tunnels, DNS and cloudflared for local projects",
   "keywords": [
@@ -9,7 +9,10 @@
     "dns",
     "cli"
   ],
-  "repository": "github:zfir-dev/burrow",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zfir-dev/burrow.git"
+  },
   "type": "module",
   "bin": {
     "burrow": "bin/burrow.js"
@@ -26,13 +29,19 @@
   "scripts": {
     "test": "node --test"
   },
-  "license": "UNLICENSED",
-  "private": true,
+  "license": "MIT",
   "dependencies": {
     "@alpinejs/csp": "3.17.5",
     "@picocss/pico": "2.1.1",
     "commander": "^12.1.0",
     "qrcode-generator": "2.0.4",
     "yaml": "^2.9.1"
+  },
+  "homepage": "https://github.com/zfir-dev/burrow#readme",
+  "bugs": {
+    "url": "https://github.com/zfir-dev/burrow/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

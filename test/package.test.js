@@ -7,9 +7,13 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
-test('package.json is set up for a global install, never for publishing', () => {
+test('package.json is set up for publishing burrow-cli with a burrow command', () => {
   assert.deepEqual(pkg.bin, { burrow: 'bin/burrow.js' });
-  assert.equal(pkg.private, true, 'private: true keeps it off the npm registry');
+  assert.equal(pkg.name, 'burrow-cli');
+  assert.notEqual(pkg.private, true, 'private: true would block npm publish');
+  assert.equal(pkg.license, 'MIT');
+  assert.equal(pkg.publishConfig?.access, 'public');
+  assert.ok(!pkg.scripts?.postinstall && !pkg.scripts?.preinstall, 'no install scripts');
   assert.equal(pkg.type, 'module');
   assert.match(pkg.engines.node, />=18/);
   for (const f of ['bin', 'src', 'examples', 'README.md']) assert.ok(pkg.files.includes(f), f);
