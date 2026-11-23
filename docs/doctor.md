@@ -37,7 +37,21 @@ Project acme-shop (/home/me/code/acme-shop/tunnel.yml)
 - **cloudflared:** runs `cloudflared --version` (or `CLOUDFLARED_BIN`).
 - **Projects:** opens a TCP connection to every service and path target. It checks
   `burrow doctor <project>`, `-f <file>`, or `./tunnel.yml`; with none of those, every project
-  burrow remembers.
+  burrow remembers. For each project it also:
+  - checks the zone of its own [`domain:`](domains.md), when that differs from `BURROW_DOMAIN`
+    (fails if the zone isn't on the account or the token can't see it; skipped with `--offline`);
+  - validates its [`hooks:`](hooks.md) (fails on the same errors `burrow up` would), and warns
+    when a hook's command can't be found: the first word on `PATH`, or a `./script` relative to
+    the tunnel.yml directory. Commands starting with variable assignments, shell builtins or
+    other shell syntax aren't second-guessed.
+
+```console
+Project acme-shop (/home/me/code/acme-shop/tunnel.yml)
+  ✓ domain example.org - zone 4d2e…
+  ✓ hook pre_up (background) - /usr/bin/npm
+  ! hook post_up - notify-send not found on PATH
+  ✓ app -> http://localhost:3100 - reachable
+```
 
 `--json` prints the report as one line of JSON (`counts` and `checks`, each with `section`,
 `status`, `label`, `detail` and, for warnings and failures, a `fix` hint). `--all` checks every

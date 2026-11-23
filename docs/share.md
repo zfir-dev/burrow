@@ -28,6 +28,18 @@ Removed https://k3x9q2mf7a.example.dev
   removes it at that time like `burrow down share-<label>`, so no dashboard is needed. See
   [Expiry](#expiry).
 - `--dry-run` prints the plan without calling Cloudflare.
+- `--domain <domain>` shares on another zone of the account (`<label>.example.org`) instead of
+  `BURROW_DOMAIN`; the zone is checked like a project's [`domain:`](domains.md).
+- `-f <tunnel.yml>` (or `--project <name>`, which uses the tunnel.yml its last `burrow up`
+  remembered) shares *for* that project: its `domain:` is used unless `--domain` is given, and
+  its [hooks](hooks.md) run around the share: `pre_up` before the tunnel is created, `post_up`
+  once cloudflared runs, `pre_down`/`post_down` on Ctrl+C or `burrow down share-<label>`.
+  Hooks get `BURROW_PROJECT=share-<label>`, the share's `BURROW_URL` and `BURROW_HOSTNAMES`,
+  `BURROW_SHARE=1` and `BURROW_SHARE_OF=<project>`, and run in the tunnel.yml directory. A
+  background `pre_up` belongs to the share (its own pid file), not to the project.
+  `--no-hooks` skips them, also at `down`.
+- The zone and project file are kept in `share-<label>.json` (`domain`, `zoneId`,
+  `projectFile`), so `restart`, `down` and `destroy` use the same zone later.
 - Don't name your own projects `share-…`, so they can't be mistaken for shares.
 
 ### Expiry

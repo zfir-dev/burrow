@@ -1,10 +1,14 @@
 import { randomBytes } from 'node:crypto';
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { loadConfig, requireConfig, stateDir } from './config.js';
 import { Cloudflare } from './cloudflare.js';
-import { tunnelName, recordComment, tunnelTarget, assertLabel } from './naming.js';
+import { tunnelName, recordComment, tunnelTarget, assertLabel, assertDomain } from './naming.js';
 import { ensureExpiryWatcher } from './share-expiry.js';
 import { startConnector, stopConnector, runningPid, saveMeta, readMeta, removeMeta, logFile } from './process.js';
+import { loadProjectFile } from './project.js';
+import { zoneIdFor, inZone } from './zones.js';
+import { runHook, beforeDown, afterDown, stopBackground } from './hooks.js';
 
 // A share is a throwaway project: tunnel burrow-share-<label>, hostname
 // <label>.<domain>, DNS comment burrow:share-<label>, state share-<label>.*
@@ -69,13 +73,41 @@ async function client(cfg) {
   return cf;
 }
 
+// The client for a share's zone: the one remembered in its state (--domain or the project's
+// domain:), else BURROW_DOMAIN's.
+async function shareClient(cfg, meta) {
+  if (meta?.zoneId) return inZone(new Cloudflare({ token: cfg.token, accountId: cfg.accountId }), meta.zoneId);
+  requireConfig(cfg, ['domain']);
+  return client(cfg);
+}
+
+// Which tunnel.yml a share is for: -f <path>, or --project <name> (the file its last
+// `burrow up` remembered). Gives its domain: and hooks to the share.
+function shareProject(opts) {
+  let file = null;
+  if (opts.file) file = resolve(opts.file);
+  else if (opts.project) {
+    file = readMeta(opts.project)?.file || null;
+    if (!file) throw new Error(`No tunnel.yml known for "${opts.project}". Run burrow up for it once, or pass -f.`);
+  }
+  if (!file) return null;
+  if (!existsSync(file)) throw new Error(`${file} not found.`);
+  return { file, proj: loadProjectFile(file) };
+}
+
+// Hook context for a share: its own project name (so a background pre_up gets its own pid
+// file), the project's tunnel.yml for the commands and their directory.
+const shareHookContext = (project, file, hostname, of) => ({
+  project, file, hostnames: [hostname], url: `https://${hostname}`, extra: { BURROW_SHARE: '1', BURROW_SHARE_OF: of },
+});
+
 // Stop the connector and delete the share's DNS records, tunnel and state.
 export async function removeShare(project, cf) {
   const meta = readMeta(project);
   if (!cf) {
     const cfg = loadConfig();
-    requireConfig(cfg, ['token', 'accountId', 'domain']);
-    cf = await client(cfg);
+    requireConfig(cfg, ['token', 'accountId']);
+    cf = await shareClient(cfg, meta);
   }
   await stopConnector(project);
   for (const r of await cf.recordsByComment(recordComment(project))) await cf.deleteRecord(r.id);
@@ -118,8 +150,8 @@ export async function restartShare(project, opts = {}) {
     return 'planned';
   }
   const cfg = loadConfig();
-  requireConfig(cfg, ['token', 'accountId', 'domain']);
-  const cf = await client(cfg);
+  requireConfig(cfg, ['token', 'accountId']);
+  const cf = await shareClient(cfg, meta);
   const tunnel = await cf.findTunnel(tunnelName(project));
   if (!tunnel) {
     await stopConnector(project);
@@ -147,30 +179,54 @@ export async function restartShare(project, opts = {}) {
 export async function share(target, opts = {}) {
   const dry = !!opts.dryRun;
   const cfg = loadConfig();
-  requireConfig(cfg, dry ? ['domain'] : ['token', 'accountId', 'domain']);
   const url = targetUrl(target);
+  const of = shareProject(opts);
+  // --domain, else the project's domain:, else BURROW_DOMAIN.
+  const domain = opts.domain || of?.proj.domain || cfg.domain;
+  if (opts.domain) assertDomain(opts.domain);
+  requireConfig(cfg, (dry ? [] : ['token', 'accountId']).concat(domain ? [] : ['domain']));
   const label = opts.name || randomLabel();
   assertLabel(label, 'share name');
   const project = SHARE_PREFIX + label;
-  const hostname = `${label}.${cfg.domain}`;
+  const hostname = `${label}.${domain}`;
   const ingress = [{ hostname, service: url }, { service: 'http_status:404' }];
+  const hooks = { enabled: opts.hooks !== false };
+  const hookCtx = of && shareHookContext(project, of.file, hostname, of.proj.project);
   const expiresMs = opts.expires === undefined ? null : parseExpires(opts.expires);
   const expiresAt = expiresMs ? new Date(Date.now() + expiresMs).toISOString() : null;
 
   if (dry) {
+    if (domain !== cfg.domain) log(`[dry-run] would use domain ${domain}${opts.domain ? '' : ` from ${of.file}`} (checking its zone is on the account)`);
+    if (hookCtx) await runHook('pre_up', hookCtx, { dry: true, ...hooks });
     log(`[dry-run] would create tunnel ${tunnelName(project)} with ingress ${JSON.stringify(ingress)}`);
     log(`[dry-run] would create DNS CNAME ${hostname} (comment "${recordComment(project)}")`);
     log(`[dry-run] would start cloudflared and share ${url} at https://${hostname}${expiresAt ? ` until ${expiresAt}` : ''}`);
+    if (hookCtx) await runHook('post_up', hookCtx, { dry: true, ...hooks });
     return;
   }
   if (readMeta(project)) throw new Error(`Share "${label}" already exists. Remove it with "burrow down ${project}".`);
 
-  const cf = await client(cfg);
+  let cf;
+  let zoneId = null;
+  if (domain === cfg.domain) cf = await client(cfg);
+  else {
+    const base = new Cloudflare({ token: cfg.token, accountId: cfg.accountId });
+    zoneId = await zoneIdFor(base, cfg, domain);
+    cf = inZone(base, zoneId);
+  }
   if ((await cf.recordsByName(hostname)).length) throw new Error(`${hostname} already has DNS records; pick another --name.`);
-  const tunnel = await cf.createTunnel(tunnelName(project), randomBytes(32).toString('base64'));
+  if (hookCtx) await runHook('pre_up', hookCtx, hooks);
+  let tunnel;
+  try { tunnel = await cf.createTunnel(tunnelName(project), randomBytes(32).toString('base64')); } catch (e) {
+    await stopBackground(project);
+    throw e;
+  }
   saveMeta(project, {
     project, share: true, hostname, target: url, tunnelId: tunnel.id, tunnelName: tunnelName(project),
     hostnames: [hostname], createdAt: new Date().toISOString(), expiresAt,
+    // Not `file`: a share is never `burrow up`-able. projectFile gives down its hooks.
+    ...(zoneId ? { domain, zoneId } : {}),
+    ...(of ? { projectFile: of.file, shareOf: of.proj.project, hooks: hooks.enabled } : {}),
     // A share in the foreground belongs to this process; restart leaves it alone.
     ownerPid: opts.detach ? null : process.pid,
   });
@@ -183,9 +239,11 @@ export async function share(target, opts = {}) {
     pid = startConnector(project, await cf.getTunnelToken(tunnel.id), cfg.cloudflared);
   } catch (e) {
     await removeShare(project, cf).catch(() => {});
+    await stopBackground(project);
     throw e;
   }
   log(`Sharing ${url} at https://${hostname} (cloudflared pid ${pid}, log ${logFile(project)})`);
+  if (hookCtx) await runHook('post_up', { ...hookCtx, extra: { ...hookCtx.extra, BURROW_TUNNEL_ID: tunnel.id } }, { ...hooks, soft: true });
   if (expiresAt) log(`Expires at ${expiresAt}${opts.detach ? ' (a background watcher removes it then)' : ''}.`);
   if (opts.detach && expiresAt) ensureExpiryWatcher(project);
   if (opts.detach) {
@@ -207,6 +265,11 @@ export async function share(target, opts = {}) {
   log('Press Ctrl+C to stop sharing and remove the hostname.');
   await stopped;
   log('Removing share…');
+  if (of) {
+    const ctx = await beforeDown(project, opts);
+    await stopConnector(project);
+    await afterDown(project, ctx, opts);
+  }
   await removeShare(project, cf);
   log(`Removed https://${hostname}`);
 }

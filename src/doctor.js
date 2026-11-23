@@ -1,11 +1,30 @@
-import { existsSync, statSync, readdirSync } from 'node:fs';
+import { existsSync, statSync, readdirSync, accessSync, constants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { connect } from 'node:net';
 import { loadConfig, stateDir } from './config.js';
 import { Cloudflare } from './cloudflare.js';
 import { assertDomain } from './naming.js';
 import { findProjectFile, loadProjectFile } from './project.js';
 import { readMeta } from './process.js';
+import { loadHooks } from './hooks.js';
+import { zoneIdFor } from './zones.js';
+
+const SHELL_BUILTINS = new Set(['cd', 'exec', 'export', 'set', 'test', '[', 'true', 'false', ':', '.', 'source', 'echo', 'printf', 'exit', 'trap', 'wait', 'sleep', 'if', 'for', 'while', 'case', '{', '(']);
+const executable = (p) => { try { accessSync(p, constants.X_OK); return statSync(p).isFile(); } catch { return false; } };
+
+// Can the first word of a hook command be found? Best effort: a hook is a shell command, so
+// anything with leading variable assignments, builtins or shell syntax is not second-guessed.
+export function hookCommandFound(run, cwd, path = process.env.PATH || '') {
+  const word = String(run).trim().split(/\s+/)[0] || '';
+  if (!word || /[=$`'"*?;|&<>(){}]/.test(word) || SHELL_BUILTINS.has(word)) return { ok: true, detail: 'not checked (shell syntax)' };
+  if (word.includes('/')) {
+    const p = isAbsolute(word) ? word : join(cwd, word);
+    return executable(p) ? { ok: true, detail: word } : { ok: false, detail: `${word} not found or not executable in ${cwd}` };
+  }
+  for (const dir of path.split(delimiter)) if (dir && executable(join(dir, word))) return { ok: true, detail: join(dir, word) };
+  return { ok: false, detail: `${word} not found on PATH` };
+}
 
 const MARK = { pass: '✓', warn: '!', fail: '✗', skip: '-' };
 
@@ -116,6 +135,29 @@ export async function doctor(projectArg, opts = {}) {
       continue;
     }
     section(`Project ${proj.project} (${file})`);
+    // The project's own domain: is a separate zone; the API section only checked BURROW_DOMAIN's.
+    if (proj.domain && proj.domain !== cfg.domain) {
+      if (opts.offline) report('skip', `domain ${proj.domain}`, '--offline');
+      else if (!cfg.token || !cfg.accountId) report('skip', `domain ${proj.domain}`, 'config incomplete');
+      else {
+        try {
+          const cf = new Cloudflare({ token: cfg.token, accountId: cfg.accountId });
+          report('pass', `domain ${proj.domain}`, `zone ${await zoneIdFor(cf, cfg, proj.domain, { refresh: true })}`);
+        } catch (e) {
+          report('fail', `domain ${proj.domain}`, e.message, `Add ${proj.domain} to the account in CF_ACCOUNT_ID and give the token Zone > Zone > Read and Zone > DNS > Edit for it, or remove domain: from ${file}.`);
+        }
+      }
+    }
+    let hooks = {};
+    try { hooks = loadHooks(file); } catch (e) {
+      report('fail', 'hooks', e.message, `Fix the hooks: section of ${file} (burrow up stops on the same error).`);
+    }
+    for (const [name, h] of Object.entries(hooks)) {
+      const cwd = dirname(file);
+      const r = hookCommandFound(h.run, cwd);
+      report(r.ok ? 'pass' : 'warn', `hook ${name}${h.background ? ' (background)' : ''}`, r.detail,
+        `Install the command or fix hooks.${name} in ${file}; hooks run with /bin/sh in ${cwd}.`);
+    }
     for (const s of proj.services) {
       for (const p of s.paths) {
         const r = await checkTarget(p.url);
