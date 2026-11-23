@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
-import { projectDomain, zoneIdFor, recordsEverywhere, inZone } from './zones.js';
+import { projectDomain, zoneIdFor, recordsEverywhere, inZone, zoneErrorCollector, zoneErrorFor } from './zones.js';
 import { loadConfig, requireConfig, writeTemplate, configPath } from './config.js';
 import { Cloudflare } from './cloudflare.js';
 import { syncAccess, removeAccessApps, privateHosts } from './access.js';
@@ -287,9 +287,15 @@ export async function ls(opts = {}) {
   requireConfig(cfg, ['token', 'accountId']);
   const cf = client(cfg);
   const tunnels = (await cf.listTunnels()).filter((t) => t.name.startsWith('burrow-'));
-  const records = await recordsEverywhere(cf, cfg, { prefix: 'burrow:' });
+  // A zone whose DNS can't be read doesn't stop the listing: its projects are shown with
+  // their hostnames unknown, a warning goes to stderr and the exit code is 1.
+  const zones = zoneErrorCollector();
+  const records = await recordsEverywhere(cf, cfg, { prefix: 'burrow:', onError: zones.onError });
+  warnZones(zones.list);
+  const zoneError = (t) => zoneErrorFor(t.name.slice('burrow-'.length), zones.list, cfg);
+  if (tunnels.some(zoneError)) process.exitCode = 1;
   if (opts.json) {
-    log(JSON.stringify(tunnels.map((t) => tunnelJson(t, records)), null, 2));
+    log(JSON.stringify(tunnels.map((t) => tunnelJson(t, records, zoneError(t))), null, 2));
     return;
   }
   if (!tunnels.length) { log('No burrow tunnels.'); return; }
@@ -299,11 +305,19 @@ export async function ls(opts = {}) {
     const hosts = records.filter((r) => r.comment === recordComment(project)).map((r) => r.name);
     log(`${project}  tunnel=${t.status || 'unknown'}  local=${pid ? `running (pid ${pid})` : 'stopped'}`);
     for (const h of hosts) log(`  https://${h}`);
+    const ze = zoneError(t);
+    if (ze) log(`  hostnames unknown: zone ${ze.zone} unreadable`);
   }
 }
 
+function warnZones(list) {
+  for (const z of list) console.error(`burrow: warning: couldn't read DNS in ${z.zone} (${z.error}); hostnames there are unknown.`);
+}
+
 // JSON shape shared by `ls --json` and `status --json`. No secrets, no origin IPs.
-function tunnelJson(t, records) {
+// zoneError ({ zone, error }) is set, and hostnames may be incomplete, when the zone holding
+// the project's DNS couldn't be read.
+function tunnelJson(t, records, zoneError = null) {
   const project = t.name.slice('burrow-'.length);
   const pid = runningPid(project);
   return {
@@ -311,6 +325,8 @@ function tunnelJson(t, records) {
     running: !!pid,
     pid: pid || null,
     hostnames: records.filter((r) => r.comment === recordComment(project)).map((r) => r.name).sort(),
+    hostnamesKnown: !zoneError,
+    zoneError,
     tunnel: {
       id: t.id,
       name: t.name,
@@ -327,16 +343,21 @@ export async function status(projectArg, opts = {}) {
   const configured = !!(cfg.token && cfg.accountId && cfg.domain);
   let t = null;
   let records = [];
+  const zones = zoneErrorCollector();
   if (configured) {
     const cf = client(cfg);
     t = await cf.findTunnel(tunnelName(project));
-    if (t) records = await recordsEverywhere(cf, cfg, { comment: recordComment(project) });
+    if (t) records = await recordsEverywhere(cf, cfg, { comment: recordComment(project), onError: zones.onError });
   }
+  warnZones(zones.list);
+  const zoneError = zoneErrorFor(project, zones.list, cfg);
+  if (zoneError) process.exitCode = 1;
   if (opts.json) {
     log(JSON.stringify({
       project, running: !!pid, pid: pid || null, log: logFile(project), cloudflare: configured,
       tunnel: t && { id: t.id, name: t.name, status: t.status || 'unknown', connections: tunnelJson(t, []).tunnel.connections },
       records: records.map((r) => ({ type: r.type, name: r.name, content: r.content, proxied: !!r.proxied })),
+      recordsKnown: !zoneError, zoneError, zoneErrors: zones.list.map(({ zone, error }) => ({ zone, error })),
     }, null, 2));
     return;
   }
@@ -347,6 +368,7 @@ export async function status(projectArg, opts = {}) {
   if (!t) { log(`Tunnel ${tunnelName(project)}: not found`); return; }
   log(`Tunnel ${t.name}: ${t.status} (${t.id}), ${t.connections?.length || 0} connection(s)`);
   for (const r of records) log(`  ${r.type} https://${r.name} -> ${r.content}${r.proxied ? ' (proxied)' : ''}`);
+  if (zoneError) log(`  DNS: unknown, zone ${zoneError.zone} unreadable (${zoneError.error})`);
 }
 
 export async function logs(projectArg, opts) {

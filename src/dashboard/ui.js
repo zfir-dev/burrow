@@ -65,6 +65,7 @@ export const renderApp = (panels = []) => {
             <div class="host"><a :href="hostUrl(h)" :title="h" target="_blank" rel="noopener noreferrer" x-text="h"></a>${s('hostExtras')}</div>
           </template>
           <small x-show="noHosts(p)">none</small>
+          <small class="zone-unreadable" x-show="hasZoneError(p)" :title="zoneErrorTitle(p)" x-text="zoneErrorText(p)"></small>
         </td>
         <td class="col-local"><span class="badge" :class="localClass(p)" x-text="localText(p)"></span><br><small x-text="pidText(p)"></small>${s('localExtras')}</td>
         <td class="col-conn"><span class="badge" :class="connClass(p)" x-text="connStatus(p)"></span><br><small x-text="connInfo(p)"></small></td>
@@ -130,6 +131,7 @@ export const APP_HTML = renderApp([]);
 export const APP_CSS = `
 .login{min-height:100vh;display:grid;place-items:center}.login article{width:min(360px,100%)}
 .error{color:var(--pico-del-color)}
+small.warn,small.zone-unreadable{color:#d97706}small.zone-unreadable{display:block}
 .badge{display:inline-block;font-size:.75rem;line-height:1.4;padding:.1rem .5rem;border-radius:999px;
   border:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color);white-space:nowrap}
 .badge.ok{color:#1f9d55;border-color:#1f9d55}.badge.warn{color:#d97706;border-color:#d97706}.badge.bad{color:#dc2626;border-color:#dc2626}
@@ -328,8 +330,15 @@ document.addEventListener('alpine:init', function () {
 
       get hasProjects() { return this.projects.length > 0; },
       get empty() { return !this.loading && this.projects.length === 0; },
-      get cfText() { var e = this.cf.error; return e ? (/^Cloudflare/.test(e) ? e : 'Cloudflare: ' + e) : 'Cloudflare: connected'; },
-      get cfClass() { return this.cf.error ? 'error' : ''; },
+      get cfText() {
+        var e = this.cf.error; if (e) return /^Cloudflare/.test(e) ? e : 'Cloudflare: ' + e;
+        var z = this.cf.zoneErrors || [];
+        return z.length ? 'Cloudflare: connected, DNS unreadable in ' + z.map(function (x) { return x.zone; }).join(', ') : 'Cloudflare: connected';
+      },
+      get cfClass() { return this.cf.error ? 'error' : ((this.cf.zoneErrors || []).length ? 'warn' : ''); },
+      hasZoneError: function (p) { return !!p.zoneError; },
+      zoneErrorText: function (p) { return p.zoneError ? 'unknown: zone ' + p.zoneError.zone + ' unreadable' : ''; },
+      zoneErrorTitle: function (p) { return p.zoneError ? p.zoneError.error : ''; },
 
       hostUrl: function (h) { return 'https://' + h; },
       noHosts: function (p) { return p.hostnames.length === 0; },

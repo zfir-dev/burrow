@@ -35,3 +35,26 @@ services:
 - The dashboard's project form has a **Domain** picker (Cloudflare zones on the account, cached
   zones and domains in use, or any other name), and its hostname and rename previews use the
   project's domain.
+
+## When a zone can't be read
+
+If the token loses access to one of the zones burrow knows (or Cloudflare returns an error for
+it), the rest keeps working:
+
+- `burrow ls` still lists every tunnel. Projects whose DNS is in that zone (the zone `burrow up`
+  remembered for them, else `BURROW_DOMAIN`'s) show `hostnames unknown: zone <domain>
+  unreadable`, a warning per zone goes to stderr, and the exit code is **1** because the
+  output is incomplete. It's 0 when the unreadable zone holds none of the listed projects.
+- `burrow ls --json` adds `hostnamesKnown` (false for those projects) and `zoneError`
+  (`{ zone, error }`, else `null`) to each entry.
+- `burrow status <project>` prints `DNS: unknown, zone <domain> unreadable (…)` and exits 1
+  only when that project's zone is the unreadable one; `--json` adds `recordsKnown`,
+  `zoneError` and `zoneErrors` (every zone that failed, `[{ zone, error }]`).
+- The dashboard table keeps tunnel and local state for every project; affected projects show
+  their remembered hostnames with **unknown: zone … unreadable** (the error on hover), and the
+  top bar says **DNS unreadable in …**. `GET /api/tunnels` has `zoneError` per project and
+  `cloudflare.zoneErrors`.
+
+`burrow destroy` queues DNS deletions in such a zone and `burrow prune` retries them (see
+[prune](prune.md#queued-dns-deletions)).
+
