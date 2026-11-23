@@ -10,6 +10,7 @@ test('renderUnit', () => {
   const unit = renderUnit({
     node: '/opt/node/bin/node', bin: '/opt/burrow/bin/burrow.js', projects: ['acme-shop', 'todo-api'],
     env: { PATH: '/usr/bin:/bin', BURROW_CONFIG: '/home/me/my config.env', HOME: '/home/me' },
+    systemdRun: null,
   });
   assert.match(unit, /^Type=oneshot$/m);
   assert.match(unit, /^RemainAfterExit=yes$/m);
