@@ -131,11 +131,11 @@ test('global npm install: --check compares commits, update reinstalls into the s
   try {
     const first = git(w.seed, 'rev-parse', 'HEAD');
     const prefix = join(w.dir, 'prefix');
-    const pkgDir = join(prefix, 'lib', 'node_modules', 'burrow');
+    const pkgDir = join(prefix, 'lib', 'node_modules', 'burrow-cli');
     copyPackage(pkgDir);
     symlinkSync(join(ROOT, 'node_modules'), join(pkgDir, 'node_modules'));
     writeFileSync(join(prefix, 'lib', 'node_modules', '.package-lock.json'), JSON.stringify({
-      packages: { 'node_modules/burrow': { resolved: `git+file://${w.origin}#${first}` } },
+      packages: { 'node_modules/burrow-cli': { resolved: `git+file://${w.origin}#${first}` } },
     }));
 
     let r = w.burrow(pkgDir, ['update', '--check']);
@@ -161,6 +161,56 @@ test('global npm install: --check compares commits, update reinstalls into the s
     r = w.burrow(pkgDir, ['update', '--dry-run', '--force'], { BURROW_UPDATE_SOURCE: 'github:acme/burrow-fork' });
     assert.match(r.stdout, /install -g github:acme\/burrow-fork --prefix/);
   } finally { w.cleanup(); }
+});
+
+test('global npm install from the registry: update checks npm and runs npm i -g burrow-cli@latest', () => {
+  const w = world();
+  try {
+    const prefix = join(w.dir, 'prefix');
+    const pkgDir = join(prefix, 'lib', 'node_modules', 'burrow-cli');
+    copyPackage(pkgDir);
+    symlinkSync(join(ROOT, 'node_modules'), join(pkgDir, 'node_modules'));
+    writeFileSync(join(prefix, 'lib', 'node_modules', '.package-lock.json'), JSON.stringify({
+      packages: { 'node_modules/burrow-cli': { resolved: 'https://registry.npmjs.org/burrow-cli/-/burrow-cli-0.1.0.tgz' } },
+    }));
+    const current = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')).version;
+    // A fake npm that answers `view` with a version and logs everything else.
+    const fake = (latest) => {
+      const npm = join(w.dir, 'fake-npm-reg');
+      writeFileSync(npm, `#!/bin/sh\nif [ "$1" = view ]; then echo ${latest}; exit 0; fi\necho "$PWD|$*" >> "${join(w.dir, 'npm.log')}"\n`);
+      chmodSync(npm, 0o755);
+      return { BURROW_NPM: npm };
+    };
+
+    let r = w.burrow(pkgDir, ['update', '--check'], fake(current));
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /global npm install of burrow-cli/);
+    assert.match(r.stdout, /Up to date/);
+    r = w.burrow(pkgDir, ['update'], fake(current));
+    assert.match(r.stdout, /Already up to date/);
+    assert.deepEqual(w.npmCalls(), []);
+
+    r = w.burrow(pkgDir, ['update', '--check', '--json'], fake('9.9.9'));
+    const j = JSON.parse(r.stdout.trim().split('\n').pop());
+    assert.equal(j.available, true);
+    assert.equal(j.latest, '9.9.9');
+
+    r = w.burrow(pkgDir, ['update', '--dry-run'], fake('9.9.9'));
+    assert.match(r.stdout, new RegExp(`would run: \\S+ install -g burrow-cli@latest --prefix ${prefix}`));
+    assert.deepEqual(w.npmCalls(), []);
+
+    r = w.burrow(pkgDir, ['update'], fake('9.9.9'));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(w.npmCalls().length, 1);
+    assert.match(w.npmCalls()[0], new RegExp(`\\|install -g burrow-cli@latest --prefix ${prefix} --no-audit --no-fund$`));
+  } finally { w.cleanup(); }
+});
+
+test('newerVersion compares x.y.z numerically', async () => {
+  const { newerVersion } = await import('../src/update.js');
+  assert.equal(newerVersion('0.10.0', '0.9.0'), true);
+  assert.equal(newerVersion('1.0.0', '1.0.0'), false);
+  assert.equal(newerVersion('0.1.0', '0.1.1'), false);
 });
 
 test('an unknown install layout explains how to reinstall', () => {

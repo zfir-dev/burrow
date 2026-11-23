@@ -33,7 +33,8 @@ const readPkg = (root) => JSON.parse(readFileSync(join(root, 'package.json'), 'u
 
 // How is this copy installed?
 //   git:     a git checkout (git pull --ff-only + npm install)
-//   npm:     <prefix>/lib/node_modules/burrow from `npm install -g` (reinstall with npm)
+//   npm:     <prefix>/lib/node_modules/<package> from `npm install -g` (reinstall with npm).
+//            `registry` is true for installs from the npm registry, false for git sources.
 //   unknown: anything else
 export function detectInstall(root = PACKAGE_ROOT) {
   root = resolve(root);
@@ -50,7 +51,9 @@ export function detectInstall(root = PACKAGE_ROOT) {
       const lock = JSON.parse(readFileSync(join(nm, '.package-lock.json'), 'utf8'));
       resolved = lock.packages?.[`node_modules/${pkg.name}`]?.resolved || null;
     } catch {}
-    return { mode: 'npm', root, pkg, prefix, resolved };
+    // Installed from the npm registry (a tarball URL) rather than from a git source.
+    const registry = /^https?:\/\//.test(resolved || '') && !process.env.BURROW_UPDATE_SOURCE;
+    return { mode: 'npm', root, pkg, prefix, resolved, registry };
   }
   return { mode: 'unknown', root, pkg };
 }
@@ -87,7 +90,7 @@ export function updateSource(info, env = process.env) {
     const repo = info.pkg.repository;
     spec = typeof repo === 'string' ? repo : repo?.url || '';
   }
-  if (!spec) throw new Error('No update source: set BURROW_UPDATE_SOURCE (e.g. github:<owner>/burrow).');
+  if (!spec) throw new Error('No update source: set BURROW_UPDATE_SOURCE (e.g. github:zfir-dev/burrow).');
   const { url, ref } = gitUrl(spec);
   return { spec, url, ref: isSha(ref) ? null : ref, installed };
 }
@@ -108,7 +111,24 @@ export function checkGit(info) {
   return { branch, upstream: up.out, head, remote, behind, ahead, commits, version: info.pkg.version, remoteVersion };
 }
 
+// Newer-than for plain x.y.z versions (prerelease tags are ignored).
+export function newerVersion(a, b) {
+  const n = (v) => String(v).split('-')[0].split('.').map((x) => Number(x) || 0);
+  const [x, y] = [n(a), n(b)];
+  for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); }
+  return false;
+}
+
+// The latest version on the npm registry (`npm view <name> version`).
+export function checkRegistry(info) {
+  const name = info.pkg.name;
+  const latest = must(npmBin(), ['view', name, 'version'], { timeout: GIT_TIMEOUT }).split('\n').pop().trim();
+  if (!/^\d+\.\d+\.\d+/.test(latest)) throw new Error(`npm view ${name} version returned "${latest}"`);
+  return { name, latest, version: info.pkg.version, upToDate: !newerVersion(latest, info.pkg.version) };
+}
+
 export function checkNpm(info) {
+  if (info.registry) throw new Error('registry install: use checkRegistry');
   const src = updateSource(info);
   const out = must(gitBin(), ['ls-remote', src.url, src.ref || 'HEAD']);
   const latest = out.split('\n')[0]?.split(/\s+/)[0] || null;
@@ -157,7 +177,31 @@ function updateGit(info, opts) {
   log(`burrow is now ${readPkg(cwd).version} (${short(now)}).`);
 }
 
+function reportRegistry(c, info) {
+  log(`burrow ${c.version}: global npm install of ${c.name} in ${info.prefix}`);
+  if (c.upToDate) { log(`Up to date (latest on npm is ${c.latest}).`); return; }
+  log(`Newer version on npm: ${c.version} -> ${c.latest}.`);
+  log('Run "burrow update" to install it.');
+}
+
+function updateRegistry(info, opts) {
+  const name = info.pkg.name;
+  if (!opts.force) {
+    let c = null;
+    try { c = checkRegistry(info); } catch (e) { log(`Couldn't check npm (${e.message}); reinstalling anyway.`); }
+    if (c?.upToDate) { log(`Already up to date (${c.version}). Use --force to reinstall.`); return; }
+  }
+  const args = ['install', '-g', `${name}@latest`, '--prefix', info.prefix, '--no-audit', '--no-fund'];
+  if (opts.dryRun) { log(`[dry-run] would run: ${npmBin()} ${args.join(' ')}`); return; }
+  log(`Running: ${npmBin()} ${args.join(' ')}`);
+  must(npmBin(), args, { timeout: NPM_TIMEOUT, inherit: true });
+  let version = '?';
+  try { version = readPkg(info.root).version; } catch {}
+  log(`burrow is now ${version}.`);
+}
+
 function updateNpm(info, opts) {
+  if (info.registry) return updateRegistry(info, opts);
   const src = updateSource(info);
   if (!opts.force) {
     let c = null;
@@ -183,6 +227,10 @@ export function checkSummary(info) {
       behind: c.behind, ahead: c.ahead, commits: c.commits, remoteVersion: c.remoteVersion,
     };
   }
+  if (info.registry) {
+    const r = checkRegistry(info);
+    return { ...base, available: !r.upToDate, latest: r.latest, source: 'npm' };
+  }
   const c = checkNpm(info);
   return { ...base, available: c.upToDate === null ? null : !c.upToDate, head: short(c.installed), latest: short(c.latest), source: c.url };
 }
@@ -190,7 +238,7 @@ export function checkSummary(info) {
 export async function update(opts = {}) {
   const info = detectInstall();
   if (info.mode === 'unknown') {
-    let hint = 'npm install -g github:<owner>/burrow';
+    let hint = 'npm install -g burrow-cli';
     try { hint = `npm install -g ${updateSource(info).spec}`; } catch {}
     if (opts.json) { console.log(JSON.stringify({ mode: 'unknown', version: info.pkg.version, available: null, checkedAt: new Date().toISOString() })); return; }
     throw new Error(`Can't tell how burrow at ${info.root} was installed (not a git checkout or a global npm install). Reinstall with: ${hint}`);
@@ -201,5 +249,6 @@ export async function update(opts = {}) {
     return;
   }
   if (info.mode === 'git') return opts.check ? reportGit(checkGit(info), info) : updateGit(info, opts);
+  if (info.registry && opts.check) return reportRegistry(checkRegistry(info), info);
   return opts.check ? reportNpm(checkNpm(info), info) : updateNpm(info, opts);
 }
