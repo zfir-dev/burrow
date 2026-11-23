@@ -112,6 +112,7 @@ program.command('restart [project]')
   .description('re-sync and restart a project (all running projects when none is given)')
   .option('-f, --file <path>', 'path to tunnel.yml')
   .option('--dry-run', 'print the plan only')
+  .option('--no-hooks', 'skip the pre_up/post_up hooks in tunnel.yml')
   .action(wrap(async (p, o) => (await import('../src/restart.js')).restart(p, o)));
 program.command('destroy [project]')
   .description('stop cloudflared and delete the tunnel and its DNS records')
