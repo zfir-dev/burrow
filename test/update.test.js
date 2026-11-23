@@ -51,10 +51,16 @@ function world() {
   };
   const burrow = (root, args, env = {}) => spawnSync(process.execPath, [join(root, 'bin', 'burrow.js'), ...args], {
     encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL',
-    env: { ...process.env, BURROW_NPM: npm, BURROW_UPDATE_SOURCE: '', GIT_CONFIG_GLOBAL: '/dev/null', ...env },
+    env: {
+      ...process.env, BURROW_NPM: npm, BURROW_UPDATE_SOURCE: '', GIT_CONFIG_GLOBAL: '/dev/null',
+      // Never the real config, history or Cloudflare API: `burrow update` records history.
+      BURROW_CONFIG: join(dir, 'config.env'), BURROW_STATE_DIR: join(dir, 'state'), BURROW_CF_API_BASE: 'http://127.0.0.1:1',
+      ...env,
+    },
   });
   const npmCalls = () => { try { return readFileSync(npmLog, 'utf8').trim().split('\n'); } catch { return []; } };
-  return { dir, origin, seed, bump, burrow, npmCalls, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  const history = () => { try { return readFileSync(join(dir, 'state', 'history', 'events.jsonl'), 'utf8'); } catch { return ''; } };
+  return { dir, origin, seed, bump, burrow, npmCalls, history, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 function checkout(w) {
@@ -115,6 +121,7 @@ test('git checkout: --check reports new commits, update pulls and runs npm insta
 
     r = w.burrow(co, ['update']);
     assert.match(r.stdout, /Already up to date/);
+    assert.match(w.history(), /"action":"update"/, 'history goes to the sandbox state dir');
   } finally { w.cleanup(); }
 });
 
