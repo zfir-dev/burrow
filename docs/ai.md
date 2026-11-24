@@ -22,7 +22,7 @@ ask it to "put the app on port 3000 online as acme-shop".
 
 | Command | What it does |
 | ------- | ------------ |
-| `burrow ai login [code]` | Pair this machine using a one-time code from the dashboard's Devices page (or from the `create_pairing_code` MCP tool). Prompts for the code when you leave it out. `--server <url>` (default `BURROW_AI_SERVER` or `https://api-burrow-ai.zfir.dev`), `--name <device>` (default: hostname) |
+| `burrow ai login [code]` | Pair this machine using a one-time code from the dashboard's Devices page (or from the `create_pairing_code` MCP tool). Prompts for the code when you leave it out. `--server <url>` (default `BURROW_AI_SERVER` or `https://api.burrow-ai.zfir.dev`), `--name <device>` (default: hostname) |
 | `burrow ai connect` | Connect out to burrow-ai over a WebSocket and serve your agents' requests. Reconnects with backoff. `--json` logs one JSON object per line |
 | `burrow ai connect --install-service` | Write and start a systemd user unit (`burrow-ai-connect.service`) that keeps it running; `--uninstall-service` removes it, `--dry-run` prints the unit |
 | `burrow ai status` | The pairing (never the token), the service state and the exposures burrow-ai made on this machine (`--json`) |

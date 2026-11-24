@@ -202,7 +202,7 @@ program.command('stats [project]')
 const ai = program.command('ai').description('let AI agents use this burrow through burrow-ai: login | connect | status | logout');
 ai.command('login [code]')
   .description('pair this machine with burrow-ai using a one-time code from the dashboard')
-  .option('--server <url>', 'burrow-ai server (default BURROW_AI_SERVER or https://api-burrow-ai.zfir.dev)')
+  .option('--server <url>', 'burrow-ai server (default BURROW_AI_SERVER or https://api.burrow-ai.zfir.dev)')
   .option('--name <device>', 'device name shown in the dashboard (default: hostname)')
   .action(wrap(async (code, o) => (await import('../src/ai/commands.js')).login(code, o)));
 ai.command('connect')

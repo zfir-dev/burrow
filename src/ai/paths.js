@@ -12,5 +12,5 @@ export const credentialsFile = (env = process.env) => join(configDir(env), 'devi
 export const policyFile = (env = process.env) => join(configDir(env), 'policy.json');
 
 // The hosted burrow-ai service. BURROW_AI_SERVER or --server override it.
-export const DEFAULT_SERVER = 'https://api-burrow-ai.zfir.dev';
+export const DEFAULT_SERVER = 'https://api.burrow-ai.zfir.dev';
 export const defaultServer = (env = process.env) => env.BURROW_AI_SERVER || DEFAULT_SERVER;
