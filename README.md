@@ -149,6 +149,7 @@ See [`examples/acme-shop.tunnel.yml`](examples/acme-shop.tunnel.yml).
 | `burrow stats [project]`         | Requests, bandwidth and 2xx/3xx/4xx/5xx counts per hostname from Cloudflare's GraphQL Analytics (`--since 24h`, `--json`). Needs **Zone > Analytics > Read** ([details](docs/stats.md)) |
 | `burrow logs [project]`          | Show the cloudflared log (`-n 200`, `--follow`) |
 | `burrow watch [projects...]`     | Check connectors, tunnel health and local service ports every `--interval` seconds and alert on changes through `BURROW_ALERT_WEBHOOK` (JSON; Slack/Discord-compatible) and/or `BURROW_ALERT_NTFY`; `--debounce`, `--once` for cron, `--install-service` for a systemd unit ([details](docs/alerts.md)) |
+| `burrow ai login\|connect\|status\|logout` | Optional: connect this machine to the hosted burrow-ai service so AI agents (Claude.ai, ChatGPT, … over remote MCP) can expose, check and stop apps through your burrow. Only a fixed set of operations, only on shares it created ([details](docs/ai.md)) |
 
 `destroy` with no project and no `--all` refuses to run.
 
@@ -584,6 +585,19 @@ error, with any credentials in a URL removed.
 | --- | --- | --- |
 | `BURROW_UPDATE_CHECK` | on | `off` turns the dashboard's update check off (no git calls) |
 | `BURROW_UPDATE_CHECK_HOURS` | `24` | How old the cached result can get before the next check |
+
+## AI agents (burrow ai)
+
+`burrow ai` lets AI agents use this burrow through **burrow-ai**, a hosted (paid) remote MCP
+service. Your Cloudflare token stays on this machine; the agent can only expose a port or
+folder as `<name>.<domain>`, check it, read its logs, stop it, and list what it made.
+
+```sh
+burrow ai login          # one-time code from the burrow-ai dashboard
+burrow ai connect        # or: burrow ai connect --install-service
+```
+
+See [docs/ai.md](docs/ai.md) for the operations, local policy, files and the protocol version.
 
 ## Tests
 

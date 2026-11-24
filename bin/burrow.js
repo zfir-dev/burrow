@@ -197,4 +197,27 @@ program.command('stats [project]')
   .option('--json', 'machine-readable output')
   .action(wrap(async (p, o) => (await import('../src/stats.js')).stats(p, o)));
 
+// burrow ai: connect this machine to the hosted burrow-ai service so AI agents (Claude,
+// ChatGPT, … over remote MCP) can put local apps online through this burrow.
+const ai = program.command('ai').description('let AI agents use this burrow through burrow-ai: login | connect | status | logout');
+ai.command('login [code]')
+  .description('pair this machine with burrow-ai using a one-time code from the dashboard')
+  .option('--server <url>', 'burrow-ai server (default BURROW_AI_SERVER or https://api-burrow-ai.zfir.dev)')
+  .option('--name <device>', 'device name shown in the dashboard (default: hostname)')
+  .action(wrap(async (code, o) => (await import('../src/ai/commands.js')).login(code, o)));
+ai.command('connect')
+  .description('connect out to burrow-ai and run what your agents ask: expose, status, logs, stop, list')
+  .option('--json', 'log one JSON object per line')
+  .option('--install-service', 'install and start a systemd user unit that runs burrow ai connect')
+  .option('--uninstall-service', 'remove that unit')
+  .option('--dry-run', 'with --install-service/--uninstall-service: print what would happen')
+  .action(wrap(async (o) => (await import('../src/ai/commands.js')).connect(o)));
+ai.command('status')
+  .description('show the pairing (never the token), the service and exposures made by burrow-ai')
+  .option('--json', 'machine-readable output')
+  .action(wrap(async (o) => (await import('../src/ai/commands.js')).status(o)));
+ai.command('logout')
+  .description('delete the stored device token')
+  .action(wrap(async () => (await import('../src/ai/commands.js')).logout()));
+
 await program.parseAsync();
