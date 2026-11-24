@@ -13,7 +13,8 @@ import { runHook, beforeDown, afterDown, stopBackground } from './hooks.js';
 // A share is a throwaway project: tunnel burrow-share-<label>, hostname
 // <label>.<domain>, DNS comment burrow:share-<label>, state share-<label>.*
 export const SHARE_PREFIX = 'share-';
-const log = (...a) => console.log(...a);
+const say = (...a) => console.log(...a);
+const log = say;
 
 // --expires: 30m, 2h, 1d, 7d (at least 1 minute, at most 30 days). Returns milliseconds.
 const EXPIRY_UNITS = { m: 60e3, min: 60e3, h: 3600e3, d: 24 * 3600e3 };
@@ -176,7 +177,11 @@ export async function restartShare(project, opts = {}) {
   return 'restarted';
 }
 
+// Returns { project, hostname, url, target, pid, expiresAt } for a --detach share, so
+// in-process callers (burrow ai connect) don't have to parse the output. opts.log
+// replaces console.log for the progress lines.
 export async function share(target, opts = {}) {
+  const log = opts.log || say;
   const dry = !!opts.dryRun;
   const cfg = loadConfig();
   const url = targetUrl(target);
@@ -248,7 +253,7 @@ export async function share(target, opts = {}) {
   if (opts.detach && expiresAt) ensureExpiryWatcher(project);
   if (opts.detach) {
     log(`Running in the background. Remove it with "burrow down ${project}" (or "burrow down").`);
-    return;
+    return { project, hostname, url: `https://${hostname}`, target: url, pid, expiresAt };
   }
   // Register the signal handlers before telling the user to press Ctrl+C. The state file is
   // re-read every 2 s: the dashboard can extend the expiry or ask this process to stop.

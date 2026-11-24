@@ -337,8 +337,13 @@ function tunnelJson(t, records, zoneError = null) {
   };
 }
 
-export async function status(projectArg, opts = {}) {
-  const project = resolveName(projectArg, opts);
+// What `status --json` prints, as an object. No output, no exit code: zone read errors
+// are in zoneError/zoneErrors. Used in-process by burrow ai connect.
+export async function statusJson(project) {
+  return (await collectStatus(project)).json;
+}
+
+async function collectStatus(project) {
   const cfg = loadConfig();
   const pid = runningPid(project);
   const configured = !!(cfg.token && cfg.accountId && cfg.domain);
@@ -350,16 +355,23 @@ export async function status(projectArg, opts = {}) {
     t = await cf.findTunnel(tunnelName(project));
     if (t) records = await recordsEverywhere(cf, cfg, { comment: recordComment(project), onError: zones.onError });
   }
-  warnZones(zones.list);
   const zoneError = zoneErrorFor(project, zones.list, cfg);
+  const json = {
+    project, running: !!pid, pid: pid || null, log: logFile(project), cloudflare: configured,
+    tunnel: t && { id: t.id, name: t.name, status: t.status || 'unknown', connections: tunnelJson(t, []).tunnel.connections },
+    records: records.map((r) => ({ type: r.type, name: r.name, content: r.content, proxied: !!r.proxied })),
+    recordsKnown: !zoneError, zoneError, zoneErrors: zones.list.map(({ zone, error }) => ({ zone, error })),
+  };
+  return { json, pid, configured, t, records, zones, zoneError };
+}
+
+export async function status(projectArg, opts = {}) {
+  const project = resolveName(projectArg, opts);
+  const { json, pid, configured, t, records, zones, zoneError } = await collectStatus(project);
+  warnZones(zones.list);
   if (zoneError) process.exitCode = 1;
   if (opts.json) {
-    log(JSON.stringify({
-      project, running: !!pid, pid: pid || null, log: logFile(project), cloudflare: configured,
-      tunnel: t && { id: t.id, name: t.name, status: t.status || 'unknown', connections: tunnelJson(t, []).tunnel.connections },
-      records: records.map((r) => ({ type: r.type, name: r.name, content: r.content, proxied: !!r.proxied })),
-      recordsKnown: !zoneError, zoneError, zoneErrors: zones.list.map(({ zone, error }) => ({ zone, error })),
-    }, null, 2));
+    log(JSON.stringify(json, null, 2));
     return;
   }
   log(`Project: ${project}`);
